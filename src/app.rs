@@ -18,9 +18,9 @@ use crate::modules::build::{find_gradlew, spawn_gradle};
 use crate::modules::config::{save_global_config, save_project_config, MergedConfig};
 use crate::modules::device::scan_devices;
 use crate::modules::logcat::{
-    clear_buffer, is_crash_continuation, is_crash_start, matches_any_exclude_with_cached, matches_level_filter,
-    parse_log_line, refresh_pids_for_packages, spawn_logcat_reader, CrashEvent, LogEntry,
-    LogcatFilter,
+    clear_buffer, is_crash_continuation, is_crash_start, matches_any_exclude_with_cached,
+    matches_level_filter, parse_log_line, refresh_pids_for_packages, spawn_logcat_reader,
+    CrashEvent, LogEntry, LogcatFilter,
 };
 use crate::modules::mirror::launch_scrcpy;
 use crate::modules::project::{infer_project, ProjectInference};
@@ -201,6 +201,100 @@ where
     None
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct LogViewportFilter {
+    levels: Option<String>,
+    content_lower: String,
+    exclude_lower: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LogViewportCacheKey {
+    revision: u64,
+    filter: LogViewportFilter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LogViewportWindow {
+    pub(crate) indices: Vec<usize>,
+    pub(crate) newer_context_index: Option<usize>,
+    pub(crate) visible_count: usize,
+    pub(crate) scroll_from_bottom: usize,
+}
+
+#[derive(Debug, Default)]
+struct LogViewportCache {
+    key: Option<LogViewportCacheKey>,
+    visible_indices: Vec<usize>,
+    #[cfg(test)]
+    rebuild_count: usize,
+}
+
+impl LogViewportCache {
+    fn window(
+        &mut self,
+        log_lines: &[LogEntry],
+        revision: u64,
+        filter: LogViewportFilter,
+        scroll_from_bottom: usize,
+        capacity: usize,
+    ) -> LogViewportWindow {
+        self.refresh(log_lines, revision, filter);
+
+        let visible_count = self.visible_indices.len();
+        let capacity = capacity.max(1);
+        let scroll_from_bottom = scroll_from_bottom.min(visible_count.saturating_sub(capacity));
+        let end = visible_count.saturating_sub(scroll_from_bottom);
+        let start = end.saturating_sub(capacity);
+
+        LogViewportWindow {
+            indices: self.visible_indices[start..end].to_vec(),
+            newer_context_index: self.visible_indices.get(end).copied(),
+            visible_count,
+            scroll_from_bottom,
+        }
+    }
+
+    fn refresh(&mut self, log_lines: &[LogEntry], revision: u64, filter: LogViewportFilter) {
+        let key = LogViewportCacheKey { revision, filter };
+        if self.key.as_ref() == Some(&key) {
+            return;
+        }
+
+        self.visible_indices.clear();
+        self.visible_indices.reserve(log_lines.len());
+        for (idx, entry) in log_lines.iter().enumerate() {
+            if log_entry_matches_viewport_filter(entry, &key.filter) {
+                self.visible_indices.push(idx);
+            }
+        }
+        self.key = Some(key);
+        #[cfg(test)]
+        {
+            self.rebuild_count += 1;
+        }
+    }
+
+    #[cfg(test)]
+    fn rebuild_count(&self) -> usize {
+        self.rebuild_count
+    }
+}
+
+fn log_entry_matches_viewport_filter(entry: &LogEntry, filter: &LogViewportFilter) -> bool {
+    if !matches_level_filter(filter.levels.as_deref(), &entry.level) {
+        return false;
+    }
+    if !filter.content_lower.is_empty() && !entry.cached_search_text.contains(&filter.content_lower)
+    {
+        return false;
+    }
+    !filter
+        .exclude_lower
+        .iter()
+        .any(|exclude| !exclude.is_empty() && entry.cached_search_text.contains(exclude))
+}
+
 fn missing_crash_message() -> &'static str {
     "no crash/ANR captured yet; `y` does not open generic error logs"
 }
@@ -323,6 +417,8 @@ pub struct App {
     pub logcat_paused: bool,
     pub log_lines: Vec<LogEntry>,
     pub max_log_lines: usize,
+    log_revision: u64,
+    log_view_cache: LogViewportCache,
     pub filter_input: String,
     pub filter_focused: bool,
     pub exclude_input: String,
@@ -438,16 +534,54 @@ impl App {
     }
 
     /// Optimized version that takes pre-computed exclude substrings to avoid repeated allocations.
-    pub fn pane_shows_entry_with_excludes(&self, entry: &LogEntry, exclude_substrings: &[String]) -> bool {
+    pub fn pane_shows_entry_with_excludes(
+        &self,
+        entry: &LogEntry,
+        exclude_substrings: &[String],
+    ) -> bool {
         if !matches_level_filter(self.effective_log_levels().as_deref(), &entry.level) {
             return false;
         }
-        if !self.cached_filter_lower.is_empty() {
-            if !entry.cached_search_text.contains(&self.cached_filter_lower) {
-                return false;
-            }
+        if !self.cached_filter_lower.is_empty()
+            && !entry.cached_search_text.contains(&self.cached_filter_lower)
+        {
+            return false;
         }
         !matches_any_exclude_with_cached(exclude_substrings, entry)
+    }
+
+    fn log_viewport_filter(&self) -> LogViewportFilter {
+        let mut exclude_lower = self
+            .config
+            .project
+            .exclude_filters
+            .iter()
+            .map(|exclude| exclude.to_lowercase())
+            .collect::<Vec<_>>();
+        if !self.cached_exclude_lower.is_empty() {
+            exclude_lower.push(self.cached_exclude_lower.clone());
+        }
+
+        LogViewportFilter {
+            levels: self.effective_log_levels(),
+            content_lower: self.cached_filter_lower.clone(),
+            exclude_lower,
+        }
+    }
+
+    pub(crate) fn log_viewport_window(
+        &mut self,
+        scroll_from_bottom: usize,
+        capacity: usize,
+    ) -> LogViewportWindow {
+        let filter = self.log_viewport_filter();
+        self.log_view_cache.window(
+            &self.log_lines,
+            self.log_revision,
+            filter,
+            scroll_from_bottom,
+            capacity,
+        )
     }
 
     /// Filtered package list used for the package picker display.
@@ -552,6 +686,8 @@ impl App {
             logcat_paused: false,
             log_lines: Vec::new(),
             max_log_lines: 10_000,
+            log_revision: 0,
+            log_view_cache: LogViewportCache::default(),
             filter_input: String::new(),
             filter_focused: false,
             exclude_input: String::new(),
@@ -851,6 +987,10 @@ impl App {
         Ok(())
     }
 
+    fn mark_log_lines_changed(&mut self) {
+        self.log_revision = self.log_revision.wrapping_add(1);
+    }
+
     fn drain_channels(&mut self) {
         let mut got_new = false;
         while let Ok(line) = self.rx_log.try_recv() {
@@ -893,6 +1033,9 @@ impl App {
         if got_new && self.log_scroll > 0 {
             self.log_scroll += 1; // keep same relative position as buffer grows
             self.new_lines_while_scrolled += 1; // track new lines for notification
+        }
+        if got_new {
+            self.mark_log_lines_changed();
         }
         while let Ok(line) = self.rx_build.try_recv() {
             self.build_lines.push(line);
@@ -983,6 +1126,7 @@ impl App {
 
     pub fn clear_logs(&mut self) {
         self.log_lines.clear();
+        self.mark_log_lines_changed();
         if let Some(serial) = self.selected_serial() {
             let _ = clear_buffer(&self.adb, serial);
         }
@@ -1251,6 +1395,7 @@ impl App {
             }
             Action::ClearFilter => {
                 self.filter_input.clear();
+                self.cached_filter_lower.clear();
                 self.filter_focused = false;
             }
             Action::FocusExclude => {
@@ -1261,6 +1406,7 @@ impl App {
             }
             Action::ClearExclude => {
                 self.exclude_input.clear();
+                self.cached_exclude_lower.clear();
                 self.exclude_focused = false;
             }
             Action::ExportLogs => {
@@ -1891,9 +2037,9 @@ fn merge_known_packages(
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_known_packages, missing_crash_message, package_match_score,
-        preferred_device_index, scroll_offset_to_entry, Device, LevelFilterMode, LogEntry,
-        PackageMatchScore,
+        merge_known_packages, missing_crash_message, package_match_score, preferred_device_index,
+        scroll_offset_to_entry, Device, LevelFilterMode, LogEntry, LogViewportCache,
+        LogViewportFilter, PackageMatchScore,
     };
 
     fn entry(raw: &str) -> LogEntry {
@@ -1909,6 +2055,148 @@ mod tests {
             is_stack_trace: false,
             cached_search_text,
         }
+    }
+
+    fn numbered_entry(index: usize, level: &str) -> LogEntry {
+        let raw = format!("line-{index}");
+        let tag = format!("Tag{}", index % 4);
+        let message = format!("message {index}");
+        let cached_search_text = format!("{tag} {level} {message} {raw}").to_lowercase();
+        LogEntry {
+            raw,
+            timestamp: "12:00:00.000".to_string(),
+            pid: "1234".to_string(),
+            tag,
+            level: level.to_string(),
+            message,
+            crash_start: false,
+            is_stack_trace: false,
+            cached_search_text,
+        }
+    }
+
+    #[test]
+    fn log_viewport_cache_reuses_index_when_only_scroll_changes() {
+        let lines = (0..10_000)
+            .map(|i| numbered_entry(i, "E"))
+            .collect::<Vec<_>>();
+        let mut cache = LogViewportCache::default();
+        let filter = LogViewportFilter::default();
+
+        let tail = cache.window(&lines, 1, filter.clone(), 0, 30);
+        assert_eq!(tail.indices, (9_970..10_000).collect::<Vec<_>>());
+        assert_eq!(tail.visible_count, 10_000);
+        assert_eq!(tail.scroll_from_bottom, 0);
+        assert_eq!(cache.rebuild_count(), 1);
+
+        let deep = cache.window(&lines, 1, filter, 9_000, 30);
+        assert_eq!(deep.indices, (970..1_000).collect::<Vec<_>>());
+        assert_eq!(deep.visible_count, 10_000);
+        assert_eq!(deep.scroll_from_bottom, 9_000);
+        assert_eq!(cache.rebuild_count(), 1);
+    }
+
+    #[test]
+    fn log_viewport_cache_rebuilds_when_logs_or_filter_change() {
+        let mut lines = (0..10)
+            .map(|i| numbered_entry(i, if i % 2 == 0 { "E" } else { "W" }))
+            .collect::<Vec<_>>();
+        let mut cache = LogViewportCache::default();
+
+        let all = cache.window(&lines, 1, LogViewportFilter::default(), 0, 5);
+        assert_eq!(all.indices, vec![5, 6, 7, 8, 9]);
+        assert_eq!(cache.rebuild_count(), 1);
+
+        let warnings = cache.window(
+            &lines,
+            1,
+            LogViewportFilter {
+                levels: Some("W".to_string()),
+                ..Default::default()
+            },
+            0,
+            5,
+        );
+        assert_eq!(warnings.indices, vec![1, 3, 5, 7, 9]);
+        assert_eq!(cache.rebuild_count(), 2);
+
+        lines.push(numbered_entry(10, "W"));
+        let warnings_after_push = cache.window(
+            &lines,
+            2,
+            LogViewportFilter {
+                levels: Some("W".to_string()),
+                ..Default::default()
+            },
+            0,
+            5,
+        );
+        assert_eq!(warnings_after_push.indices, vec![3, 5, 7, 9, 10]);
+        assert_eq!(cache.rebuild_count(), 3);
+    }
+
+    #[test]
+    fn log_viewport_window_clamps_scroll_to_filtered_entries() {
+        let lines = (0..10)
+            .map(|i| numbered_entry(i, if i % 2 == 0 { "E" } else { "W" }))
+            .collect::<Vec<_>>();
+        let mut cache = LogViewportCache::default();
+
+        let window = cache.window(
+            &lines,
+            1,
+            LogViewportFilter {
+                levels: Some("W".to_string()),
+                ..Default::default()
+            },
+            999,
+            3,
+        );
+
+        assert_eq!(window.visible_count, 5);
+        assert_eq!(window.scroll_from_bottom, 2);
+        assert_eq!(window.indices, vec![1, 3, 5]);
+    }
+
+    #[test]
+    fn log_viewport_filter_applies_content_and_excludes() {
+        let lines = (0..10).map(|i| numbered_entry(i, "E")).collect::<Vec<_>>();
+        let mut cache = LogViewportCache::default();
+
+        let content = cache.window(
+            &lines,
+            1,
+            LogViewportFilter {
+                content_lower: "message 9".to_string(),
+                ..Default::default()
+            },
+            0,
+            5,
+        );
+        assert_eq!(content.indices, vec![9]);
+
+        let excluded = cache.window(
+            &lines,
+            1,
+            LogViewportFilter {
+                exclude_lower: vec!["message 9".to_string()],
+                ..Default::default()
+            },
+            0,
+            5,
+        );
+        assert_eq!(excluded.indices, vec![4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn log_viewport_window_reports_newer_context_for_boundary_rendering() {
+        let lines = (0..10).map(|i| numbered_entry(i, "E")).collect::<Vec<_>>();
+        let mut cache = LogViewportCache::default();
+
+        let window = cache.window(&lines, 1, LogViewportFilter::default(), 2, 3);
+
+        assert_eq!(window.indices, vec![5, 6, 7]);
+        assert_eq!(window.newer_context_index, Some(8));
     }
 
     #[test]

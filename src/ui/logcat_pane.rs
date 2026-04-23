@@ -74,7 +74,7 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             Line::from(vec![
                 Span::styled(" filter: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    &app.filter_input,
+                    app.filter_input.clone(),
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
@@ -84,7 +84,7 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         } else {
             Line::from(vec![
                 Span::styled(" filter: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&app.filter_input, Style::default().fg(Color::Cyan)),
+                Span::styled(app.filter_input.clone(), Style::default().fg(Color::Cyan)),
             ])
         });
     }
@@ -93,7 +93,7 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             Line::from(vec![
                 Span::styled(" exclude: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    &app.exclude_input,
+                    app.exclude_input.clone(),
                     Style::default()
                         .fg(Color::Rgb(255, 150, 100))
                         .add_modifier(Modifier::BOLD),
@@ -104,7 +104,7 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             Line::from(vec![
                 Span::styled(" exclude: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    &app.exclude_input,
+                    app.exclude_input.clone(),
                     Style::default().fg(Color::Rgb(255, 150, 100)),
                 ),
             ])
@@ -137,26 +137,18 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let msg_width = (inner.width as usize).saturating_sub(PREFIX_WIDTH).max(20);
 
     let total = app.log_lines.len();
-    let scroll = app.log_scroll.min(total.saturating_sub(visible_rows));
-
-    // Pre-compute exclude substrings once instead of for every entry
-    let exclude_substrings = app.merged_exclude_substrings();
+    let viewport = app.log_viewport_window(app.log_scroll, visible_rows);
+    app.log_scroll = viewport.scroll_from_bottom;
 
     let mut collected: Vec<Line> = Vec::new();
-    let mut last_tag = String::new();
-    let mut skipped = 0usize;
+    let mut last_tag = viewport
+        .newer_context_index
+        .and_then(|idx| app.log_lines.get(idx))
+        .map(|entry| entry.tag.clone())
+        .unwrap_or_default();
 
-    for entry in app.log_lines.iter().rev() {
-        if collected.len() >= visible_rows * 3 {
-            break;
-        }
-        if !app.pane_shows_entry_with_excludes(entry, &exclude_substrings) {
-            continue;
-        }
-        if skipped < scroll {
-            skipped += 1;
-            continue;
-        }
+    for idx in viewport.indices.iter().rev() {
+        let entry = &app.log_lines[*idx];
         let lc = &entry.level;
         let lvl_color = level_style(lc);
         let tc = tag_color(&entry.tag, &mut app.tag_color_cache);
