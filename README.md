@@ -6,7 +6,6 @@
   <p>
     <a href="https://github.com/cesarferreira/byedroid/actions/workflows/rust-tests.yml"><img alt="CI" src="https://github.com/cesarferreira/byedroid/actions/workflows/rust-tests.yml/badge.svg"></a>
     <a href="https://crates.io/crates/byedroid"><img alt="Crates.io" src="https://img.shields.io/crates/v/byedroid"></a>
-    <a href="https://github.com/cesarferreira/byedroid/releases"><img alt="Release" src="https://img.shields.io/github/v/release/cesarferreira/byedroid?color=blue"></a>
     <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
   </p>
 
