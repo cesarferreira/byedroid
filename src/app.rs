@@ -27,6 +27,7 @@ use crate::modules::project::{infer_project, ProjectInference};
 
 const DEVICE_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const GIT_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+const MAX_LOG_DRAIN_PER_TICK: usize = 1_000;
 
 /// Build a list of selectable (label, assemble_task, install_task) variants.
 fn build_variant_list(
@@ -992,13 +993,16 @@ impl App {
     }
 
     fn drain_channels(&mut self) {
-        let mut got_new = false;
-        while let Ok(line) = self.rx_log.try_recv() {
+        let mut new_visible_lines = 0usize;
+        let filter = self.current_log_filter();
+        for _ in 0..MAX_LOG_DRAIN_PER_TICK {
+            let Ok(line) = self.rx_log.try_recv() else {
+                break;
+            };
             if self.logcat_paused {
                 continue;
             }
             if let Some(mut entry) = parse_log_line(&line) {
-                let filter = self.current_log_filter();
                 if !filter.allows(&entry, &self.package_pids) {
                     continue;
                 }
@@ -1008,7 +1012,7 @@ impl App {
                     self.log_lines.drain(0..drop);
                 }
                 self.log_lines.push(entry);
-                got_new = true;
+                new_visible_lines += 1;
             } else if (line.starts_with("[adb logcat stderr]") || line.starts_with("[adb"))
                 && self.log_lines.len() < self.max_log_lines
             {
@@ -1025,16 +1029,18 @@ impl App {
                     is_stack_trace: false,
                     cached_search_text,
                 });
-                got_new = true;
+                new_visible_lines += 1;
             }
         }
         // When following tail (scroll==0), keep scroll at 0 as lines come in.
         // When scrolled, advance the offset so the viewport stays on the same lines.
-        if got_new && self.log_scroll > 0 {
-            self.log_scroll += 1; // keep same relative position as buffer grows
-            self.new_lines_while_scrolled += 1; // track new lines for notification
+        if new_visible_lines > 0 && self.log_scroll > 0 {
+            self.log_scroll = self.log_scroll.saturating_add(new_visible_lines);
+            self.new_lines_while_scrolled = self
+                .new_lines_while_scrolled
+                .saturating_add(new_visible_lines);
         }
-        if got_new {
+        if new_visible_lines > 0 {
             self.mark_log_lines_changed();
         }
         while let Ok(line) = self.rx_build.try_recv() {
@@ -1533,6 +1539,9 @@ impl App {
                     self.crash_detail_scroll = self.crash_detail_scroll.saturating_sub(10);
                 } else {
                     self.log_scroll = self.log_scroll.saturating_sub(50);
+                    if self.log_scroll == 0 {
+                        self.new_lines_while_scrolled = 0;
+                    }
                 }
             }
             Action::ScrollTail => {
@@ -2036,10 +2045,17 @@ fn merge_known_packages(
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashMap, path::PathBuf, sync::mpsc, time::Instant};
+
     use super::{
         merge_known_packages, missing_crash_message, package_match_score, preferred_device_index,
-        scroll_offset_to_entry, Device, LevelFilterMode, LogEntry, LogViewportCache,
-        LogViewportFilter, PackageMatchScore,
+        scroll_offset_to_entry, AdbClient, App, BuildRecord, Device, LevelFilterMode, LogEntry,
+        LogViewportCache, LogViewportFilter, PackageMatchScore, Pane, MAX_LOG_DRAIN_PER_TICK,
+    };
+    use crate::modules::{
+        config::{GlobalConfig, MergedConfig, ProjectConfig},
+        logcat::CrashEvent,
+        project::ProjectInference,
     };
 
     fn entry(raw: &str) -> LogEntry {
@@ -2073,6 +2089,136 @@ mod tests {
             is_stack_trace: false,
             cached_search_text,
         }
+    }
+
+    fn logcat_line(index: usize) -> String {
+        format!("02-03 15:44:41.704  2359  3654 I TestTag: message {index}")
+    }
+
+    fn test_app() -> App {
+        let (tx_log, rx_log) = mpsc::channel();
+        let (tx_build, rx_build) = mpsc::channel();
+        App {
+            adb: AdbClient {
+                adb_path: PathBuf::from("adb"),
+            },
+            project_root: PathBuf::new(),
+            config: MergedConfig {
+                global: GlobalConfig::default(),
+                project: ProjectConfig::default(),
+                project_root: PathBuf::new(),
+            },
+            current_branch: None,
+            devices: Vec::new(),
+            selected_device: 0,
+            active_pane: Pane::Logs,
+            device_picker_open: false,
+            device_picker_cursor: 0,
+            build_popup_open: false,
+            build_popup_scroll: 0,
+            crash_detail_open: false,
+            crash_detail_scroll: 0,
+            build_popup_auto_close: None,
+            package_picker_open: false,
+            package_picker_input: String::new(),
+            package_picker_cursor: 0,
+            active_package_filter: None,
+            level_picker_open: false,
+            level_picker_cursor: 0,
+            level_filter_mode: LevelFilterMode::All,
+            logcat_child: None,
+            logcat_running: true,
+            logcat_paused: false,
+            log_lines: Vec::new(),
+            max_log_lines: 10_000,
+            log_revision: 0,
+            log_view_cache: LogViewportCache::default(),
+            filter_input: String::new(),
+            filter_focused: false,
+            exclude_input: String::new(),
+            exclude_focused: false,
+            tag_color_cache: HashMap::new(),
+            cached_filter_lower: String::new(),
+            cached_exclude_lower: String::new(),
+            package_pids: Vec::new(),
+            crash_events: Vec::<CrashEvent>::new(),
+            current_crash: None,
+            device_props: HashMap::new(),
+            device_battery: None,
+            installed_device_packages: Vec::new(),
+            last_device_info_refresh: Instant::now(),
+            build_history_open: false,
+            build_history_scroll: 0,
+            help_open: false,
+            build_child: None,
+            build_task: None,
+            build_start: None,
+            build_lines: Vec::new(),
+            build_history: Vec::<BuildRecord>::new(),
+            build_expanded: false,
+            toast: None,
+            rx_log,
+            tx_log,
+            rx_build,
+            tx_build,
+            last_device_refresh: Instant::now(),
+            last_git_refresh: Instant::now(),
+            pid_refresh: Instant::now(),
+            inference: ProjectInference::default(),
+            effective_packages: Vec::new(),
+            effective_assemble: "assembleDebug".to_string(),
+            effective_install: "installDebug".to_string(),
+            log_scroll: 0,
+            new_lines_while_scrolled: 0,
+            show_all_logs: true,
+            launch_after_build: false,
+            picker_open: false,
+            picker_cursor: 0,
+            picker_variants: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn drain_channels_yields_after_log_drain_budget() {
+        let mut app = test_app();
+        for i in 0..(MAX_LOG_DRAIN_PER_TICK + 25) {
+            app.tx_log.send(logcat_line(i)).unwrap();
+        }
+
+        app.drain_channels();
+
+        assert_eq!(app.log_lines.len(), MAX_LOG_DRAIN_PER_TICK);
+
+        app.drain_channels();
+
+        assert_eq!(app.log_lines.len(), MAX_LOG_DRAIN_PER_TICK + 25);
+    }
+
+    #[test]
+    fn drain_channels_keeps_scrolled_view_anchored_for_each_new_visible_log() {
+        let mut app = test_app();
+        app.log_scroll = 30;
+
+        for i in 0..7 {
+            app.tx_log.send(logcat_line(i)).unwrap();
+        }
+
+        app.drain_channels();
+
+        assert_eq!(app.log_scroll, 37);
+        assert_eq!(app.new_lines_while_scrolled, 7);
+    }
+
+    #[test]
+    fn page_down_to_tail_clears_new_log_count() {
+        let mut app = test_app();
+        app.log_scroll = 12;
+        app.new_lines_while_scrolled = 12;
+
+        app.handle_action(super::Action::ScrollPageDown).unwrap();
+
+        assert_eq!(app.log_scroll, 0);
+        assert_eq!(app.new_lines_while_scrolled, 0);
     }
 
     #[test]

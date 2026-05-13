@@ -31,7 +31,10 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         " Logcat  PAUSED "
     } else if scrolled {
         if app.new_lines_while_scrolled > 0 {
-            &format!(" Logcat  ↑{} new lines — End to jump to bottom ", app.new_lines_while_scrolled)
+            &format!(
+                " Logcat  {} logs behind — End/G to jump to bottom ",
+                app.new_lines_while_scrolled
+            )
         } else {
             " Logcat  ↑scrolled — End to tail "
         }
@@ -116,7 +119,7 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         header_lines.push(Line::from(vec![
             Span::styled(" ▼ ", Style::default().fg(Color::Yellow)),
             Span::styled(
-                format!("{} new lines at bottom", app.new_lines_while_scrolled),
+                format!("{} logs behind", app.new_lines_while_scrolled),
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),

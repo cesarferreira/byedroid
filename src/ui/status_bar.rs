@@ -31,6 +31,12 @@ fn status_text(app: &App) -> String {
         return format!("Building: {task} …");
     }
     if app.log_scroll > 0 {
+        if app.new_lines_while_scrolled > 0 {
+            return format!(
+                "{} logs behind  —  End or G to jump to bottom",
+                app.new_lines_while_scrolled
+            );
+        }
         return format!("Scrolled ↑{}  —  End or G to follow tail", app.log_scroll);
     }
     if app.logcat_paused {

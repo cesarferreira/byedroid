@@ -203,9 +203,23 @@ pub fn matches_level_filter(levels: Option<&str>, level: &str) -> bool {
     levels.split(',').any(|x| x.trim() == level)
 }
 
+const INITIAL_LOGCAT_TAIL_LINES: &str = "10000";
+
+fn logcat_reader_args(device: &str) -> Vec<String> {
+    vec![
+        "-s".to_string(),
+        device.to_string(),
+        "logcat".to_string(),
+        "-T".to_string(),
+        INITIAL_LOGCAT_TAIL_LINES.to_string(),
+        "-v".to_string(),
+        "threadtime".to_string(),
+    ]
+}
+
 pub fn spawn_logcat_reader(adb_path: &Path, device: &str, tx: Sender<String>) -> Result<Child> {
     let mut child = Command::new(adb_path)
-        .args(["-s", device, "logcat", "-v", "threadtime"])
+        .args(logcat_reader_args(device))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -333,5 +347,21 @@ mod tests {
         assert!(matches_level_filter(Some("E,F"), "E"));
         assert!(matches_level_filter(Some("E,F"), "F"));
         assert!(!matches_level_filter(Some("E,F"), "W"));
+    }
+
+    #[test]
+    fn logcat_reader_starts_from_bounded_tail_and_keeps_following() {
+        assert_eq!(
+            logcat_reader_args("emulator-5554"),
+            vec![
+                "-s",
+                "emulator-5554",
+                "logcat",
+                "-T",
+                "10000",
+                "-v",
+                "threadtime"
+            ]
+        );
     }
 }
