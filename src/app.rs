@@ -1260,6 +1260,54 @@ impl App {
         self.effective_packages.first().cloned()
     }
 
+    /// Ask the package manager to resolve the main launcher activity for the given package.
+    ///
+    /// The last non-empty line of stdout is expected to be `pkg/activity`, which is directly usable
+    /// with `am start -n`.
+    fn resolve_pkg_main_activity(&self, package: &str) -> Result<String, String> {
+        let Some(serial) = self.selected_serial() else {
+            return Err("no device selected".to_string());
+        };
+        let output = std::process::Command::new(&self.adb.adb_path)
+            .args([
+                "-s",
+                serial,
+                "shell",
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-a",
+                "android.intent.action.MAIN",
+                package,
+            ])
+            .output()
+            .map_err(|e| format!("adb error: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("adb exited {}: {}", output.status, stderr.trim()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let last_line = stdout
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .last()
+            .ok_or_else(|| "resolve-activity produced no output".to_string())?;
+        let package_activity = last_line.trim().to_string();
+        // Check that the line looks like `package/activity`, fail otherwise (it might be something else)
+        // (e.g. `com.example.app/.MainActivity`)
+        if !package_activity.starts_with(package) {
+            return Err(format!(
+                "unexpected resolve-activity output: {package_activity:?}"
+            ));
+        }
+        Ok(package_activity)
+    }
+
     fn uninstall_app(&mut self) {
         let Some(serial) = self.selected_serial().map(|s| s.to_string()) else {
             self.show_toast("No device selected");
@@ -1340,12 +1388,21 @@ impl App {
         //              (this is exactly what Android Studio does; it always matches the
         //              installed variant rather than the base/prod package ID).
         // Priority 3 — fall back to the first inferred package.
-        let package = if let Some(pkg) = self.resolve_target_package() {
-            pkg
-        } else {
+        let Some(package) = self.resolve_target_package() else {
             self.show_toast("No package known — can't launch");
             return;
         };
+
+        // Resolve the package activity explicitely first, since starting the app with implicit
+        // launcher intent doesn't seems to work on modern android versions.
+        let package_activity = match self.resolve_pkg_main_activity(&package) {
+            Ok(a) => a,
+            Err(e) => {
+                self.show_toast(format!("Could not resolve main activity for {package}: {e}"));
+                return;
+            }
+        };
+
         // Use `am start` so we can target a specific display (e.g. scrcpy --new-display).
         // `monkey` has the same launcher effect but doesn't accept --display.
         let mut args = vec![
@@ -1354,12 +1411,8 @@ impl App {
             "shell".to_string(),
             "am".to_string(),
             "start".to_string(),
-            "-a".to_string(),
-            "android.intent.action.MAIN".to_string(),
-            "-c".to_string(),
-            "android.intent.category.LAUNCHER".to_string(),
-            "-p".to_string(),
-            package.clone(),
+            "-n".to_string(),
+            package_activity,
         ];
 
         if let Some(display_id) = detect_scrcpy_display(&self.adb.adb_path, &serial) {
