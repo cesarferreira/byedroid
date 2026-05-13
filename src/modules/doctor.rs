@@ -149,7 +149,7 @@ fn collect_checks(project_root: &Path) -> Vec<CheckResult> {
         None => CheckResult {
             status: CheckStatus::Fail,
             label: "gradlew/gradle",
-            detail: "not found in project root".to_string(),
+            detail: "gradlew not found in project root and gradle not found in $PATH".to_string(),
         },
     });
 

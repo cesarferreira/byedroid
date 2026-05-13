@@ -145,6 +145,19 @@ Start `scrcpy --new-display` to get a separate virtual display (keeps your phone
 exclude_filters = ["chatty", "ViewRootImpl", "ImeTracker"]
 ```
 
+### Setup doctor
+
+Use `bd doctor` to check your local toolchain and project setup.
+
+The command includes checks for:
+- adb
+- Java
+- Gradle wrapper or $PATH gradle
+- Android project inference
+- SDK env
+- scrcpy
+- connected devices
+
 <a id="keybindings"></a>
 ## Keybindings
 
@@ -207,7 +220,7 @@ scrcpy_args = ["--window-title", "MyApp Mirror"]
 | Tool | Required | Notes |
 |------|----------|-------|
 | `adb` | Yes | Android SDK Platform Tools |
-| `gradlew` | For build/install | Any standard Android project |
+| `gradlew`/`gradle` | For build/install | Any standard Android project |
 | `scrcpy` | No | For `m` screen mirror and `--new-display` support |
 
 ## Contributing
