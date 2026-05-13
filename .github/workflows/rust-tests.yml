@@ -25,7 +25,7 @@ jobs:
         with:
           key: ubuntu-latest
       - name: Run unit tests
-        run: cargo nextest run --lib --bins
+        run: cargo nextest run --bins
 
   integration-tests:
     name: Integration Tests
