@@ -22,7 +22,7 @@ use crate::modules::logcat::{
     matches_level_filter, parse_log_line, refresh_pids_for_packages, spawn_logcat_reader,
     CrashEvent, LogEntry, LogcatFilter,
 };
-use crate::modules::mirror::launch_scrcpy;
+use crate::modules::mirror::{detect_scrcpy_display, launch_scrcpy};
 use crate::modules::project::{infer_project, ProjectInference};
 
 const DEVICE_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -1346,19 +1346,29 @@ impl App {
             self.show_toast("No package known — can't launch");
             return;
         };
-        // `monkey -p <pkg> -c android.intent.category.LAUNCHER 1` reliably starts the app.
+        // Use `am start` so we can target a specific display (e.g. scrcpy --new-display).
+        // `monkey` has the same launcher effect but doesn't accept --display.
+        let mut args = vec![
+            "-s".to_string(),
+            serial.clone(),
+            "shell".to_string(),
+            "am".to_string(),
+            "start".to_string(),
+            "-a".to_string(),
+            "android.intent.action.MAIN".to_string(),
+            "-c".to_string(),
+            "android.intent.category.LAUNCHER".to_string(),
+            "-p".to_string(),
+            package.clone(),
+        ];
+
+        if let Some(display_id) = detect_scrcpy_display(&self.adb.adb_path, &serial) {
+            args.push("--display".to_string());
+            args.push(display_id.to_string());
+        }
+
         let result = std::process::Command::new(&self.adb.adb_path)
-            .args([
-                "-s",
-                &serial,
-                "shell",
-                "monkey",
-                "-p",
-                &package,
-                "-c",
-                "android.intent.category.LAUNCHER",
-                "1",
-            ])
+            .args(&args)
             .output();
         match result {
             Ok(out) if out.status.success() => self.show_toast(format!("Launched {package}")),
