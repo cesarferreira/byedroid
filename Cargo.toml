@@ -1,6 +1,6 @@
 [package]
 name = "byedroid"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 description = "ByeDroid TUI — Android build, install, and log workflows in the terminal"
 license = "MIT"
