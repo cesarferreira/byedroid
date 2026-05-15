@@ -9,6 +9,7 @@ pub enum AppEvent {
     Action(Action),
     Text(char),
     Backspace,
+    Suspend,
 }
 
 /// Which modal is active — determines key routing.
@@ -35,6 +36,9 @@ pub fn poll_event(timeout: Duration, modal: Modal) -> std::io::Result<Option<App
         Event::Key(key) => {
             if key.kind == KeyEventKind::Release {
                 return Ok(None);
+            }
+            if key.modifiers == KeyModifiers::CONTROL {
+                return Ok(Some(AppEvent::Suspend))
             }
             Ok(match modal {
                 Modal::Filter => map_filter(key.code, key.modifiers),

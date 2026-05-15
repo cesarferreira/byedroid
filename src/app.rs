@@ -300,7 +300,7 @@ fn missing_crash_message() -> &'static str {
     "no crash/ANR captured yet; `y` does not open generic error logs"
 }
 
-use crate::tui::restore_terminal;
+use crate::tui::{restore_terminal, suspend_terminal};
 use crate::ui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1877,6 +1877,12 @@ pub fn run_app(mut terminal: Terminal<CrosstermBackend<Stdout>>, mut app: App) -
                     if app.handle_action(a)? {
                         break;
                     }
+                }
+                AppEvent::Suspend => {
+                    #[cfg(unix)]
+                    suspend_terminal(&mut terminal)?;
+                    #[cfg(windows)]
+                    app.show_toast("Suspend is not supported on Windows");
                 }
             }
             true
