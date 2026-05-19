@@ -59,7 +59,10 @@ fn perf_no_allocation_overhead() {
     }
     let elapsed = start.elapsed();
 
-    println!("✓ 100k cached filter matches (zero allocations): {:?}", elapsed);
+    println!(
+        "✓ 100k cached filter matches (zero allocations): {:?}",
+        elapsed
+    );
     assert!(
         elapsed.as_millis() < 500,
         "100k cached matches took {:?}, should be < 500ms (indicates unwanted allocations if slower)",

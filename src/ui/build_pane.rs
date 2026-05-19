@@ -2,7 +2,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -44,9 +44,9 @@ pub fn render_popup(f: &mut Frame<'_>, app: &App, area: Rect) {
         format!("  closing in {}s", remaining.as_secs() + 1)
     });
     let title = if let Some(cd) = countdown {
-        format!(" Build  {status_text}{cd}  ↑↓ scroll  Esc close ")
+        format!(" Build  {status_text}{cd}  ↑↓/PgUp/PgDn scroll  Esc close ")
     } else {
-        format!(" Build  {status_text}  ↑↓ scroll  Esc close ")
+        format!(" Build  {status_text}  ↑↓/PgUp/PgDn scroll  Esc close ")
     };
     let block = Block::default()
         .title(Span::styled(
@@ -60,7 +60,6 @@ pub fn render_popup(f: &mut Frame<'_>, app: &App, area: Rect) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    let w = inner.width.saturating_sub(1) as usize;
     let total = app.build_lines.len();
 
     if total == 0 {
@@ -88,12 +87,11 @@ pub fn render_popup(f: &mut Frame<'_>, app: &App, area: Rect) {
             } else {
                 Color::Gray
             };
-            let display: String = text.chars().take(w).collect();
-            Line::from(Span::styled(display, Style::default().fg(fg)))
+            Line::from(Span::styled(text.to_string(), Style::default().fg(fg)))
         })
         .collect();
 
-    f.render_widget(Paragraph::new(lines), inner);
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn centered(width: u16, height: u16, area: Rect) -> Rect {

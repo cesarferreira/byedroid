@@ -318,6 +318,28 @@ pub struct BuildRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastKind {
+    Info,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub kind: ToastKind,
+    pub shown_at: Instant,
+}
+
+impl Toast {
+    fn duration(&self) -> Duration {
+        match self.kind {
+            ToastKind::Info => Duration::from_secs(4),
+            ToastKind::Error => Duration::from_secs(10),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LevelFilterMode {
     ConfigDefault,
     All,
@@ -450,7 +472,7 @@ pub struct App {
     #[allow(dead_code)]
     pub build_expanded: bool,
 
-    pub toast: Option<(String, Instant)>,
+    pub toast: Option<Toast>,
 
     rx_log: mpsc::Receiver<String>,
     tx_log: mpsc::Sender<String>,
@@ -890,7 +912,25 @@ impl App {
     }
 
     fn show_toast(&mut self, msg: impl Into<String>) {
-        self.toast = Some((msg.into(), Instant::now()));
+        self.toast = Some(Toast {
+            message: msg.into(),
+            kind: ToastKind::Info,
+            shown_at: Instant::now(),
+        });
+    }
+
+    fn show_error_toast(&mut self, msg: impl Into<String>) {
+        self.toast = Some(Toast {
+            message: msg.into(),
+            kind: ToastKind::Error,
+            shown_at: Instant::now(),
+        });
+    }
+
+    fn toast_is_expired(&self, now: Instant) -> bool {
+        self.toast
+            .as_ref()
+            .is_some_and(|toast| now.duration_since(toast.shown_at) > toast.duration())
     }
 
     fn export_logs_to_file(&mut self) -> std::io::Result<()> {
@@ -1114,7 +1154,7 @@ impl App {
 
     pub fn start_logcat(&mut self) -> Result<()> {
         let Some(serial) = self.selected_serial().map(|s| s.to_string()) else {
-            self.show_toast("No device selected");
+            self.show_error_toast("No device selected");
             return Ok(());
         };
         self.stop_logcat();
@@ -1159,10 +1199,10 @@ impl App {
             if code == Some(0) {
                 self.show_toast(format!("{task} OK"));
             } else {
-                self.show_toast(format!("{task} failed: exit {code:?}"));
+                self.show_error_toast(format!("{task} failed: exit {code:?}"));
             }
-            // Start the auto-close countdown (3 seconds) for the build popup.
-            if self.build_popup_open {
+            // Successful builds can get out of the way; failures stay open for diagnosis.
+            if self.build_popup_open && code == Some(0) {
                 self.build_popup_auto_close = Some(Instant::now() + Duration::from_secs(3));
             }
         }
@@ -1174,11 +1214,11 @@ impl App {
             return Ok(());
         }
         let Some(serial) = self.selected_serial().map(|s| s.to_string()) else {
-            self.show_toast("No device selected");
+            self.show_error_toast("No device selected");
             return Ok(());
         };
         let Some(gradle) = find_gradle(&self.project_root) else {
-            self.show_toast("gradlew not found in project root / gradle not found in PATH");
+            self.show_error_toast("gradlew not found in project root / gradle not found in PATH");
             return Ok(());
         };
         self.build_lines.clear();
@@ -1204,7 +1244,7 @@ impl App {
             return Ok(());
         }
         let Some(gradle) = find_gradle(&self.project_root) else {
-            self.show_toast("gradlew not found in project root / gradle not found in PATH");
+            self.show_error_toast("gradlew not found in project root / gradle not found in PATH");
             return Ok(());
         };
         self.build_lines.clear();
@@ -1304,11 +1344,11 @@ impl App {
 
     fn uninstall_app(&mut self) {
         let Some(serial) = self.selected_serial().map(|s| s.to_string()) else {
-            self.show_toast("No device selected");
+            self.show_error_toast("No device selected");
             return;
         };
         let Some(package) = self.resolve_target_package() else {
-            self.show_toast("No package known — can't uninstall");
+            self.show_error_toast("No package known — can't uninstall");
             return;
         };
         let result = std::process::Command::new(&self.adb.adb_path)
@@ -1318,19 +1358,19 @@ impl App {
             Ok(out) if out.status.success() => self.show_toast(format!("Uninstalled {package}")),
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                self.show_toast(format!("Uninstall failed: {stderr}"));
+                self.show_error_toast(format!("Uninstall failed: {stderr}"));
             }
-            Err(e) => self.show_toast(format!("Uninstall error: {e}")),
+            Err(e) => self.show_error_toast(format!("Uninstall error: {e}")),
         }
     }
 
     fn clear_app_data(&mut self) {
         let Some(serial) = self.selected_serial().map(|s| s.to_string()) else {
-            self.show_toast("No device selected");
+            self.show_error_toast("No device selected");
             return;
         };
         let Some(package) = self.resolve_target_package() else {
-            self.show_toast("No package known — can't clear data");
+            self.show_error_toast("No package known — can't clear data");
             return;
         };
         let result = std::process::Command::new(&self.adb.adb_path)
@@ -1342,23 +1382,31 @@ impl App {
             }
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                self.show_toast(format!("Clear data failed: {stderr}"));
+                self.show_error_toast(format!("Clear data failed: {stderr}"));
             }
-            Err(e) => self.show_toast(format!("Clear data error: {e}")),
+            Err(e) => self.show_error_toast(format!("Clear data error: {e}")),
         }
     }
 
     fn clear_app_cache(&mut self) {
         let Some(serial) = self.selected_serial().map(|s| s.to_string()) else {
-            self.show_toast("No device selected");
+            self.show_error_toast("No device selected");
             return;
         };
         let Some(package) = self.resolve_target_package() else {
-            self.show_toast("No package known — can't clear cache");
+            self.show_error_toast("No package known — can't clear cache");
             return;
         };
         let result = std::process::Command::new(&self.adb.adb_path)
-            .args(["-s", &serial, "shell", "pm", "clear", "--cache-only", &package])
+            .args([
+                "-s",
+                &serial,
+                "shell",
+                "pm",
+                "clear",
+                "--cache-only",
+                &package,
+            ])
             .output();
         match result {
             Ok(out) if out.status.success() => {
@@ -1366,9 +1414,9 @@ impl App {
             }
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                self.show_toast(format!("Clear cache failed: {stderr}"));
+                self.show_error_toast(format!("Clear cache failed: {stderr}"));
             }
-            Err(e) => self.show_toast(format!("Clear cache error: {e}")),
+            Err(e) => self.show_error_toast(format!("Clear cache error: {e}")),
         }
     }
 
@@ -1383,7 +1431,7 @@ impl App {
         //              installed variant rather than the base/prod package ID).
         // Priority 3 — fall back to the first inferred package.
         let Some(package) = self.resolve_target_package() else {
-            self.show_toast("No package known — can't launch");
+            self.show_error_toast("No package known — can't launch");
             return;
         };
 
@@ -1392,7 +1440,9 @@ impl App {
         let package_activity = match self.resolve_pkg_main_activity(&package) {
             Ok(a) => a,
             Err(e) => {
-                self.show_toast(format!("Could not resolve main activity for {package}: {e}"));
+                self.show_error_toast(format!(
+                    "Could not resolve main activity for {package}: {e}"
+                ));
                 return;
             }
         };
@@ -1421,9 +1471,9 @@ impl App {
             Ok(out) if out.status.success() => self.show_toast(format!("Launched {package}")),
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                self.show_toast(format!("Launch failed: {stderr}"));
+                self.show_error_toast(format!("Launch failed: {stderr}"));
             }
-            Err(e) => self.show_toast(format!("Launch error: {e}")),
+            Err(e) => self.show_error_toast(format!("Launch error: {e}")),
         }
     }
 
@@ -1447,7 +1497,7 @@ impl App {
                 if self.logcat_running {
                     self.stop_logcat();
                 } else if let Err(e) = self.start_logcat() {
-                    self.show_toast(format!("logcat: {e}"));
+                    self.show_error_toast(format!("logcat: {e}"));
                 }
             }
             Action::FocusFilter => {
@@ -1474,7 +1524,7 @@ impl App {
             }
             Action::ExportLogs => {
                 if let Err(e) = self.export_logs_to_file() {
-                    self.show_toast(format!("export: {e}"));
+                    self.show_error_toast(format!("export: {e}"));
                 }
             }
             Action::OpenCrashDetail => {
@@ -1499,7 +1549,7 @@ impl App {
                 let body = Self::format_crash_text(crash);
                 let prompt = format!("Solve this issue. Here are the crash logs:\n\n{body}");
                 if let Err(e) = copy_to_clipboard(&prompt) {
-                    self.show_toast(format!("copy: {e}"));
+                    self.show_error_toast(format!("copy: {e}"));
                 } else {
                     self.show_toast("Agent prompt copied — paste into your AI assistant");
                     self.crash_detail_open = false;
@@ -1507,12 +1557,12 @@ impl App {
             }
             Action::CrashExport => {
                 if let Err(e) = self.export_crash_to_file() {
-                    self.show_toast(format!("export: {e}"));
+                    self.show_error_toast(format!("export: {e}"));
                 }
             }
             Action::CrashSearch => {
                 if let Err(e) = self.search_crash_online() {
-                    self.show_toast(format!("search: {e}"));
+                    self.show_error_toast(format!("search: {e}"));
                 }
             }
             Action::OpenHelp => {
@@ -1584,6 +1634,9 @@ impl App {
                     self.build_history_scroll = self.build_history_scroll.saturating_sub(10);
                 } else if self.crash_detail_open {
                     self.crash_detail_scroll = self.crash_detail_scroll.saturating_add(10);
+                } else if self.build_popup_open {
+                    self.build_popup_scroll = self.build_popup_scroll.saturating_add(50);
+                    self.build_popup_auto_close = None;
                 } else {
                     self.log_scroll = self.log_scroll.saturating_add(50);
                 }
@@ -1594,6 +1647,9 @@ impl App {
                     self.build_history_scroll = (self.build_history_scroll + 10).min(max);
                 } else if self.crash_detail_open {
                     self.crash_detail_scroll = self.crash_detail_scroll.saturating_sub(10);
+                } else if self.build_popup_open {
+                    self.build_popup_scroll = self.build_popup_scroll.saturating_sub(50);
+                    self.build_popup_auto_close = None;
                 } else {
                     self.log_scroll = self.log_scroll.saturating_sub(50);
                     if self.log_scroll == 0 {
@@ -1760,20 +1816,20 @@ impl App {
                 self.launch_after_build = false;
                 let task = self.effective_assemble.clone();
                 if let Err(e) = self.run_build_task(&task) {
-                    self.show_toast(format!("build: {e}"));
+                    self.show_error_toast(format!("build: {e}"));
                 }
             }
             Action::CleanBuild => {
                 self.launch_after_build = false;
                 if let Err(e) = self.run_clean_build() {
-                    self.show_toast(format!("clean build: {e}"));
+                    self.show_error_toast(format!("clean build: {e}"));
                 }
             }
             Action::InstallDebug => {
                 self.launch_after_build = false;
                 let task = self.effective_install.clone();
                 if let Err(e) = self.run_build_task(&task) {
-                    self.show_toast(format!("install: {e}"));
+                    self.show_error_toast(format!("install: {e}"));
                 }
             }
             Action::RunApp => {
@@ -1782,7 +1838,7 @@ impl App {
                 let task = self.effective_install.clone();
                 if let Err(e) = self.run_build_task(&task) {
                     self.launch_after_build = false;
-                    self.show_toast(format!("run: {e}"));
+                    self.show_error_toast(format!("run: {e}"));
                 }
             }
             Action::StopProcess => {
@@ -1794,12 +1850,12 @@ impl App {
             Action::ClearAppCache => self.clear_app_cache(),
             Action::LaunchScrcpy => {
                 let Some(serial) = self.selected_serial() else {
-                    self.show_toast("No device");
+                    self.show_error_toast("No device");
                     return Ok(false);
                 };
                 let extra: Vec<String> = self.config.project.scrcpy_args.clone();
                 if let Err(e) = launch_scrcpy(serial, &extra) {
-                    self.show_toast(format!("scrcpy: {e}"));
+                    self.show_error_toast(format!("scrcpy: {e}"));
                 } else {
                     self.show_toast("Launched scrcpy");
                 }
@@ -1901,11 +1957,9 @@ pub fn run_app(mut terminal: Terminal<CrosstermBackend<Stdout>>, mut app: App) -
             app.tick_pid_refresh();
             app.tick_device_info_refresh();
 
-            if let Some((_, t)) = &app.toast {
-                if t.elapsed() > Duration::from_secs(4) {
-                    app.toast = None;
-                    needs_redraw = true;
-                }
+            if app.toast_is_expired(Instant::now()) {
+                app.toast = None;
+                needs_redraw = true;
             }
 
             // Auto-close the build popup after the countdown expires.
@@ -2108,7 +2162,12 @@ fn merge_known_packages(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, path::PathBuf, sync::mpsc, time::Instant};
+    use std::{
+        collections::HashMap,
+        path::PathBuf,
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
 
     use super::{
         merge_known_packages, missing_crash_message, package_match_score, preferred_device_index,
@@ -2282,6 +2341,44 @@ mod tests {
 
         assert_eq!(app.log_scroll, 0);
         assert_eq!(app.new_lines_while_scrolled, 0);
+    }
+
+    #[test]
+    fn failed_build_keeps_popup_open_until_user_closes_it() {
+        let mut app = test_app();
+        app.build_task = Some("assembleDebug".to_string());
+        app.build_start = Some(Instant::now());
+        app.build_popup_open = true;
+
+        app.finish_build_record(Some(1));
+
+        assert_eq!(app.build_popup_auto_close, None);
+    }
+
+    #[test]
+    fn build_popup_page_scroll_changes_build_scroll_not_log_scroll() {
+        let mut app = test_app();
+        app.build_popup_open = true;
+        app.build_popup_scroll = 3;
+
+        app.handle_action(super::Action::ScrollPageUp).unwrap();
+
+        assert_eq!(app.build_popup_scroll, 53);
+        assert_eq!(app.log_scroll, 0);
+        assert_eq!(app.build_popup_auto_close, None);
+    }
+
+    #[test]
+    fn error_toasts_remain_visible_after_info_toasts_expire() {
+        let mut info_app = test_app();
+        info_app.show_toast("Launched app");
+        let info_shown_at = info_app.toast.as_ref().unwrap().shown_at;
+        assert!(info_app.toast_is_expired(info_shown_at + Duration::from_secs(5)));
+
+        let mut error_app = test_app();
+        error_app.show_error_toast("Launch failed: Activity not found");
+        let error_shown_at = error_app.toast.as_ref().unwrap().shown_at;
+        assert!(!error_app.toast_is_expired(error_shown_at + Duration::from_secs(5)));
     }
 
     #[test]

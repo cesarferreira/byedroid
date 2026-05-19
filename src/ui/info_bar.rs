@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, ToastKind};
 
 const BG: Color = Color::Rgb(14, 14, 22);
 const SEP_COL: Color = Color::Rgb(45, 45, 62);
@@ -69,7 +69,10 @@ fn row1(app: &App) -> Paragraph<'static> {
                 (true, false) => format!("  API {sdk}"),
                 (true, true) => String::new(),
             };
-            spans.push(Span::styled(label, Style::default().fg(Color::Rgb(130, 140, 170))));
+            spans.push(Span::styled(
+                label,
+                Style::default().fg(Color::Rgb(130, 140, 170)),
+            ));
         }
         if let Some(b) = app.device_battery {
             spans.push(Span::styled(
@@ -174,12 +177,14 @@ fn row2(app: &App) -> Paragraph<'static> {
     }
 
     // Priority 2: toast
-    if let Some((ref msg, _)) = app.toast {
+    if let Some(ref toast) = app.toast {
+        let color = match toast.kind {
+            ToastKind::Info => Color::Rgb(255, 220, 100),
+            ToastKind::Error => Color::Rgb(255, 90, 120),
+        };
         spans.push(Span::styled(
-            msg.clone(),
-            Style::default()
-                .fg(Color::Rgb(255, 220, 100))
-                .add_modifier(Modifier::BOLD),
+            toast.message.clone(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
         return Paragraph::new(Line::from(spans)).style(Style::default().bg(BG));
     }

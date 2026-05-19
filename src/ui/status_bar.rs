@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, ToastKind};
 
 /// Dark text on pastel background (key cap).
 fn cap(key: &str, bg: Color) -> Span<'static> {
@@ -56,10 +56,14 @@ fn status_text(app: &App) -> String {
 
 pub fn render(f: &mut Frame<'_>, app: &App, area: Rect) {
     // Line 1: dim status (toast overrides when present)
-    let line1 = if let Some((msg, _)) = &app.toast {
+    let line1 = if let Some(toast) = &app.toast {
+        let color = match toast.kind {
+            ToastKind::Info => Color::Rgb(250, 179, 135),
+            ToastKind::Error => Color::Rgb(243, 139, 168),
+        };
         Line::from(vec![Span::styled(
-            msg.as_str(),
-            Style::default().fg(Color::Rgb(250, 179, 135)),
+            toast.message.as_str(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
         )])
     } else {
         Line::from(vec![Span::styled(
@@ -74,6 +78,7 @@ pub fn render(f: &mut Frame<'_>, app: &App, area: Rect) {
     spans.extend(c("b", "build", Color::Rgb(137, 180, 250)));
     spans.extend(c("i", "install", Color::Rgb(245, 194, 231)));
     spans.extend(c("r", "run", Color::Rgb(166, 227, 161)));
+    spans.extend(c("e", "build output", Color::Rgb(250, 179, 135)));
     spans.extend(c("l", "logcat", Color::Rgb(203, 166, 247)));
     spans.extend(c("y", "last crash/ANR popup", Color::Rgb(243, 188, 219)));
     spans.extend(c("q", "quit", Color::Rgb(148, 226, 213)));
