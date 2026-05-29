@@ -64,7 +64,7 @@ curl -fsSL https://github.com/cesarferreira/byedroid/releases/latest/download/by
 curl -fsSL https://github.com/cesarferreira/byedroid/releases/latest/download/byedroid-aarch64-unknown-linux-gnu.tar.gz | tar xz
 
 mkdir -p ~/.local/bin
-mv bd ~/.local/bin/
+mv byeee ~/.local/bin/
 # Ensure ~/.local/bin is on your PATH:
 # echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
@@ -80,37 +80,37 @@ cargo install --path . --locked
 Verify the install:
 
 ```bash
-bd --version
+byeee --version
 ```
 
 <a id="quickstart"></a>
 ## Quickstart
 
-Run `bd` from your Android project root:
+Run `byeee` from your Android project root:
 
 ```bash
 cd ~/projects/my-android-app
-bd
+byeee
 ```
 
-`bd` opens immediately. If a device is connected, logcat starts automatically and follows the project's package(s). Hit `n` to build, install, and launch.
+`byeee` opens immediately. If a device is connected, logcat starts automatically and follows the project's package(s). Hit `n` to build, install, and launch.
 
 ```bash
 # Point at a project from anywhere
-bd --project /path/to/my/android/app
+byeee --project /path/to/my/android/app
 
 # Scaffold a .byedroid.toml config
-bd init
+byeee init
 
 # Check your local toolchain and project setup
-bd doctor
+byeee doctor
 ```
 
 ## Highlights
 
 ### Smart variant inference
 
-`bd` reads `app/build.gradle(.kts)` on startup and resolves everything automatically:
+`byeee` reads `app/build.gradle(.kts)` on startup and resolves everything automatically:
 
 ```groovy
 flavorDimensions "track", "environment"
@@ -147,7 +147,7 @@ exclude_filters = ["chatty", "ViewRootImpl", "ImeTracker"]
 
 ### Setup doctor
 
-Use `bd doctor` to check your local toolchain and project setup.
+Use `byeee doctor` to check your local toolchain and project setup.
 
 The command includes checks for:
 - adb

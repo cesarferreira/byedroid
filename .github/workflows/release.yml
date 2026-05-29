@@ -49,7 +49,7 @@ jobs:
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../byedroid-${{ matrix.target }}.tar.gz bd
+          tar czf ../../../byedroid-${{ matrix.target }}.tar.gz byeee
           cd ../../..
 
       - name: Upload artifact

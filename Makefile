@@ -26,23 +26,23 @@ install:
 # Copy the release binary to ~/.local/bin — no sudo
 install-user: build-release
 	mkdir -p $(USER_BIN)
-	install -m 755 target/release/bd $(USER_BIN)/bd
-	@echo "Installed $(USER_BIN)/bd"
-	@echo "If \`bd\` is not found, add this to your shell: export PATH=\"$(USER_BIN):\$$PATH\""
+	install -m 755 target/release/byeee $(USER_BIN)/byeee
+	@echo "Installed $(USER_BIN)/byeee"
+	@echo "If \`byeee\` is not found, add this to your shell: export PATH=\"$(USER_BIN):\$$PATH\""
 
 # System-wide install — requires sudo
 install-system: build-release
-	sudo install -m 755 target/release/bd $(PREFIX)/bin/bd
-	@echo "Installed $(PREFIX)/bin/bd"
+	sudo install -m 755 target/release/byeee $(PREFIX)/bin/byeee
+	@echo "Installed $(PREFIX)/bin/byeee"
 
 uninstall:
 	cargo uninstall byedroid 2>/dev/null || true
 
 uninstall-user:
-	rm -f $(USER_BIN)/bd
+	rm -f $(USER_BIN)/byeee
 
 uninstall-system:
-	sudo rm -f $(PREFIX)/bin/bd
+	sudo rm -f $(PREFIX)/bin/byeee
 
 # Clean build artifacts
 clean:
