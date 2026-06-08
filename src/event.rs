@@ -80,7 +80,9 @@ fn map_picker(code: KeyCode) -> Option<AppEvent> {
 
 fn map_build_popup(code: KeyCode) -> Option<AppEvent> {
     let a = match code {
-        KeyCode::Esc | KeyCode::Char('e') | KeyCode::Char('q') => Action::PickerCancel,
+        KeyCode::Enter | KeyCode::Esc | KeyCode::Char('e') | KeyCode::Char('q') => {
+            Action::PickerCancel
+        }
         KeyCode::Up | KeyCode::Char('k') => Action::ScrollUp,
         KeyCode::Down | KeyCode::Char('j') => Action::ScrollDown,
         KeyCode::PageUp => Action::ScrollPageUp,

@@ -423,8 +423,6 @@ pub struct App {
 
     pub crash_detail_open: bool,
     pub crash_detail_scroll: usize,
-    /// When set, the build popup auto-closes once this instant is reached.
-    pub build_popup_auto_close: Option<Instant>,
 
     pub package_picker_open: bool,
     pub package_picker_input: String,
@@ -696,7 +694,6 @@ impl App {
             build_popup_scroll: 0,
             crash_detail_open: false,
             crash_detail_scroll: 0,
-            build_popup_auto_close: None,
             package_picker_open: false,
             package_picker_input: String::new(),
             package_picker_cursor: 0,
@@ -1201,10 +1198,6 @@ impl App {
             } else {
                 self.show_error_toast(format!("{task} failed: exit {code:?}"));
             }
-            // Successful builds can get out of the way; failures stay open for diagnosis.
-            if self.build_popup_open && code == Some(0) {
-                self.build_popup_auto_close = Some(Instant::now() + Duration::from_secs(3));
-            }
         }
     }
 
@@ -1234,7 +1227,6 @@ impl App {
         self.build_start = Some(Instant::now());
         self.build_popup_open = true;
         self.build_popup_scroll = 0;
-        self.build_popup_auto_close = None;
         Ok(())
     }
 
@@ -1260,7 +1252,6 @@ impl App {
         self.build_start = Some(Instant::now());
         self.build_popup_open = true;
         self.build_popup_scroll = 0;
-        self.build_popup_auto_close = None;
         Ok(())
     }
 
@@ -1608,7 +1599,6 @@ impl App {
                     self.crash_detail_scroll = self.crash_detail_scroll.saturating_add(1);
                 } else if self.build_popup_open {
                     self.build_popup_scroll = self.build_popup_scroll.saturating_add(1);
-                    self.build_popup_auto_close = None;
                 } else {
                     self.log_scroll = self.log_scroll.saturating_add(5);
                 }
@@ -1621,7 +1611,6 @@ impl App {
                     self.crash_detail_scroll = self.crash_detail_scroll.saturating_sub(1);
                 } else if self.build_popup_open {
                     self.build_popup_scroll = self.build_popup_scroll.saturating_sub(1);
-                    self.build_popup_auto_close = None;
                 } else {
                     self.log_scroll = self.log_scroll.saturating_sub(5);
                     if self.log_scroll == 0 {
@@ -1636,7 +1625,6 @@ impl App {
                     self.crash_detail_scroll = self.crash_detail_scroll.saturating_add(10);
                 } else if self.build_popup_open {
                     self.build_popup_scroll = self.build_popup_scroll.saturating_add(50);
-                    self.build_popup_auto_close = None;
                 } else {
                     self.log_scroll = self.log_scroll.saturating_add(50);
                 }
@@ -1649,7 +1637,6 @@ impl App {
                     self.crash_detail_scroll = self.crash_detail_scroll.saturating_sub(10);
                 } else if self.build_popup_open {
                     self.build_popup_scroll = self.build_popup_scroll.saturating_sub(50);
-                    self.build_popup_auto_close = None;
                 } else {
                     self.log_scroll = self.log_scroll.saturating_sub(50);
                     if self.log_scroll == 0 {
@@ -1675,7 +1662,6 @@ impl App {
             Action::OpenBuildPopup => {
                 self.build_popup_open = !self.build_popup_open;
                 self.build_popup_scroll = 0;
-                self.build_popup_auto_close = None;
             }
             Action::OpenBuildHistory => {
                 self.build_history_open = !self.build_history_open;
@@ -1962,15 +1948,6 @@ pub fn run_app(mut terminal: Terminal<CrosstermBackend<Stdout>>, mut app: App) -
                 needs_redraw = true;
             }
 
-            // Auto-close the build popup after the countdown expires.
-            if let Some(deadline) = app.build_popup_auto_close {
-                if Instant::now() >= deadline {
-                    app.build_popup_open = false;
-                    app.build_popup_auto_close = None;
-                    needs_redraw = true;
-                }
-            }
-
             last_tick = Instant::now();
         }
 
@@ -2240,7 +2217,6 @@ mod tests {
             build_popup_scroll: 0,
             crash_detail_open: false,
             crash_detail_scroll: 0,
-            build_popup_auto_close: None,
             package_picker_open: false,
             package_picker_input: String::new(),
             package_picker_cursor: 0,
@@ -2344,15 +2320,15 @@ mod tests {
     }
 
     #[test]
-    fn failed_build_keeps_popup_open_until_user_closes_it() {
+    fn build_completion_keeps_popup_open_until_user_closes_it() {
         let mut app = test_app();
         app.build_task = Some("assembleDebug".to_string());
         app.build_start = Some(Instant::now());
         app.build_popup_open = true;
 
-        app.finish_build_record(Some(1));
+        app.finish_build_record(Some(0));
 
-        assert_eq!(app.build_popup_auto_close, None);
+        assert!(app.build_popup_open);
     }
 
     #[test]
@@ -2365,7 +2341,6 @@ mod tests {
 
         assert_eq!(app.build_popup_scroll, 53);
         assert_eq!(app.log_scroll, 0);
-        assert_eq!(app.build_popup_auto_close, None);
     }
 
     #[test]

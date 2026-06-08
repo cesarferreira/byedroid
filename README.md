@@ -186,6 +186,7 @@ The command includes checks for:
 | `m` | Launch scrcpy |
 | `s` | Stop current Gradle / logcat process |
 | `r` | Refresh device list |
+| `Ctrl-z` | Suspend the TUI (Unix only — resume with `fg`) |
 | `q` | Quit |
 
 <a id="configuration"></a>
