@@ -61,6 +61,7 @@ pub fn render(f: &mut Frame<'_>, _app: &App, area: Rect) {
         row("a", "all / package toggle", Color::Rgb(249, 226, 175)),
         row("c", "clear logs", Color::Rgb(137, 220, 235)),
         row("Space", "pause / resume", Color::Rgb(205, 214, 244)),
+        row("↑↓/wheel", "scroll logs", Color::Rgb(137, 220, 235)),
         row("w", "export logs", Color::Rgb(166, 218, 149)),
         blank(),
         section("APP"),

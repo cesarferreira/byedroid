@@ -1,6 +1,7 @@
 //! Terminal initialization and panic-safe teardown.
 use anyhow::Result;
 use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -12,7 +13,8 @@ use std::panic;
 pub fn init_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    // EnableMouseCapture is required for wheel scroll (especially under tmux).
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.hide_cursor()?;
@@ -29,14 +31,14 @@ pub fn init_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
 pub fn restore_terminal() -> Result<()> {
     disable_raw_mode()?;
     let mut stdout = stdout();
-    execute!(stdout, LeaveAlternateScreen)?;
+    execute!(stdout, DisableMouseCapture, LeaveAlternateScreen)?;
     Ok(())
 }
 
 pub fn suspend_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     // Tear down TUI state
     disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen)?;
+    execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     // Send SIGTSTP to ourselves — this blocks until SIGCONT (e.g. using `fg` in a shell)
     signal_hook::low_level::emulate_default_handler(signal_hook::consts::SIGTSTP)
@@ -44,7 +46,7 @@ pub fn suspend_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Re
     // Restore TUI state after the process resumes
     enable_raw_mode()?;
     terminal.hide_cursor()?;
-    execute!(stdout(), EnterAlternateScreen)?;
+    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     // Full redraw on restore
     terminal.clear()?;
     Ok(())

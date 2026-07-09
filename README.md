@@ -178,7 +178,7 @@ The command includes checks for:
 | `y` | Crash detail popup (`c` copy · `a` agent prompt · `w` export · `s` search) |
 | `H` | Build history overlay |
 | `Space` | Pause / resume log streaming |
-| `↑` `↓` `j` `k` | Scroll logcat |
+| `↑` `↓` `j` `k` / mouse wheel | Scroll logcat |
 | `PageUp` `PageDown` | Scroll 20 lines |
 | `End` `G` | Jump to tail |
 | `e` | Expand / collapse build output |
