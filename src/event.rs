@@ -1,5 +1,7 @@
 //! Crossterm event → Action mapping.
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use std::time::Duration;
 
 use crate::action::Action;
@@ -32,15 +34,20 @@ pub fn poll_event(timeout: Duration, modal: Modal) -> std::io::Result<Option<App
     if !event::poll(timeout)? {
         return Ok(None);
     }
-    match event::read()? {
+    Ok(map_event(event::read()?, modal))
+}
+
+/// Map a crossterm [`Event`] to an [`AppEvent`] for the active modal.
+fn map_event(event: Event, modal: Modal) -> Option<AppEvent> {
+    match event {
         Event::Key(key) => {
             if key.kind == KeyEventKind::Release {
-                return Ok(None);
+                return None;
             }
             if key.modifiers == KeyModifiers::CONTROL {
-                return Ok(Some(AppEvent::Suspend))
+                return Some(AppEvent::Suspend);
             }
-            Ok(match modal {
+            match modal {
                 Modal::Filter => map_filter(key.code, key.modifiers),
                 Modal::ExcludeFilter => map_exclude_filter(key.code, key.modifiers),
                 Modal::LevelPicker | Modal::VariantPicker | Modal::DevicePicker => {
@@ -52,10 +59,27 @@ pub fn poll_event(timeout: Duration, modal: Modal) -> std::io::Result<Option<App
                 Modal::CrashDetail => map_crash_detail(key.code),
                 Modal::HelpPopup => map_help_popup(key.code),
                 Modal::None => map_normal(key.code, key.modifiers),
-            })
+            }
         }
-        Event::Resize(_, _) => Ok(None),
-        _ => Ok(None),
+        Event::Mouse(mouse) => map_mouse(mouse, modal),
+        Event::Resize(_, _) => None,
+        _ => None,
+    }
+}
+
+fn map_mouse(mouse: MouseEvent, modal: Modal) -> Option<AppEvent> {
+    // Wheel scroll only — clicks/drags are ignored. Needed so terminals (and
+    // tmux) forward the wheel to the app instead of scrolling the pane history.
+    let action = match mouse.kind {
+        MouseEventKind::ScrollUp => Action::ScrollUp,
+        MouseEventKind::ScrollDown => Action::ScrollDown,
+        _ => return None,
+    };
+    match modal {
+        Modal::None | Modal::BuildPopup | Modal::CrashDetail | Modal::BuildHistory => {
+            Some(AppEvent::Action(action))
+        }
+        _ => None,
     }
 }
 
@@ -214,4 +238,69 @@ fn map_normal(code: KeyCode, modifiers: KeyModifiers) -> Option<AppEvent> {
         _ => None,
     };
     action.map(AppEvent::Action)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyEvent, MouseButton};
+
+    fn mouse(kind: MouseEventKind) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_logcat() {
+        let up = map_event(mouse(MouseEventKind::ScrollUp), Modal::None);
+        assert!(matches!(up, Some(AppEvent::Action(Action::ScrollUp))));
+
+        let down = map_event(mouse(MouseEventKind::ScrollDown), Modal::None);
+        assert!(matches!(down, Some(AppEvent::Action(Action::ScrollDown))));
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_build_and_crash_popups() {
+        for modal in [Modal::BuildPopup, Modal::CrashDetail, Modal::BuildHistory] {
+            let up = map_event(mouse(MouseEventKind::ScrollUp), modal);
+            assert!(
+                matches!(up, Some(AppEvent::Action(Action::ScrollUp))),
+                "expected ScrollUp for {modal:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mouse_wheel_ignored_in_text_modals() {
+        for modal in [
+            Modal::Filter,
+            Modal::ExcludeFilter,
+            Modal::PackagePicker,
+            Modal::HelpPopup,
+        ] {
+            assert!(
+                map_event(mouse(MouseEventKind::ScrollUp), modal).is_none(),
+                "wheel should be ignored in {modal:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mouse_clicks_are_ignored() {
+        assert!(map_event(mouse(MouseEventKind::Down(MouseButton::Left)), Modal::None).is_none());
+        assert!(map_event(mouse(MouseEventKind::Up(MouseButton::Left)), Modal::None).is_none());
+    }
+
+    #[test]
+    fn key_scroll_still_works() {
+        let key = Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert!(matches!(
+            map_event(key, Modal::None),
+            Some(AppEvent::Action(Action::ScrollUp))
+        ));
+    }
 }
