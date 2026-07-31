@@ -48,7 +48,7 @@ pub fn render_popup(f: &mut Frame<'_>, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(status_color));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
