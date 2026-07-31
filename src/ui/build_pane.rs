@@ -8,12 +8,12 @@ use ratatui::Frame;
 use crate::app::App;
 
 pub fn render_popup(f: &mut Frame<'_>, app: &App, area: Rect) {
-    let popup_h = (area.height * 2 / 3)
+    let popup_h = (area.height * 9 / 10)
         .max(10)
-        .min(area.height.saturating_sub(4));
-    let popup_w = (area.width * 4 / 5)
+        .min(area.height.saturating_sub(2));
+    let popup_w = (area.width * 19 / 20)
         .max(60)
-        .min(area.width.saturating_sub(4));
+        .min(area.width.saturating_sub(2));
     let popup = centered(popup_w, popup_h, area);
 
     f.render_widget(Clear, popup);
