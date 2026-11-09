@@ -68,15 +68,25 @@ fn map_event(event: Event, modal: Modal) -> Option<AppEvent> {
 }
 
 fn map_mouse(mouse: MouseEvent, modal: Modal) -> Option<AppEvent> {
-    // Wheel scroll only — clicks/drags are ignored. Needed so terminals (and
-    // tmux) forward the wheel to the app instead of scrolling the pane history.
+    // Trackpads emit horizontal wheel events; Shift+wheel supports ordinary mice.
     let action = match mouse.kind {
+        MouseEventKind::ScrollLeft => Action::ScrollLeft,
+        MouseEventKind::ScrollRight => Action::ScrollRight,
+        MouseEventKind::ScrollUp if mouse.modifiers.contains(KeyModifiers::SHIFT) => {
+            Action::ScrollLeft
+        }
+        MouseEventKind::ScrollDown if mouse.modifiers.contains(KeyModifiers::SHIFT) => {
+            Action::ScrollRight
+        }
         MouseEventKind::ScrollUp => Action::ScrollUp,
         MouseEventKind::ScrollDown => Action::ScrollDown,
         _ => return None,
     };
     match modal {
-        Modal::None | Modal::BuildPopup | Modal::CrashDetail | Modal::BuildHistory => {
+        Modal::None => Some(AppEvent::Action(action)),
+        Modal::BuildPopup | Modal::CrashDetail | Modal::BuildHistory
+            if matches!(action, Action::ScrollUp | Action::ScrollDown) =>
+        {
             Some(AppEvent::Action(action))
         }
         _ => None,
@@ -192,6 +202,8 @@ fn map_normal(code: KeyCode, modifiers: KeyModifiers) -> Option<AppEvent> {
         {
             Some(Action::ScrollDown)
         }
+        KeyCode::Left => Some(Action::ScrollLeft),
+        KeyCode::Right => Some(Action::ScrollRight),
         KeyCode::PageUp => Some(Action::ScrollPageUp),
         KeyCode::PageDown => Some(Action::ScrollPageDown),
         KeyCode::End => Some(Action::ScrollTail),
@@ -287,6 +299,39 @@ mod tests {
                 "wheel should be ignored in {modal:?}"
             );
         }
+    }
+
+    #[test]
+    fn horizontal_scroll_works_with_mouse_and_arrows() {
+        for modal in [Modal::None] {
+            assert!(matches!(
+                map_event(mouse(MouseEventKind::ScrollRight), modal),
+                Some(AppEvent::Action(Action::ScrollRight))
+            ));
+            assert!(matches!(
+                map_event(mouse(MouseEventKind::ScrollLeft), modal),
+                Some(AppEvent::Action(Action::ScrollLeft))
+            ));
+            let key = Event::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+            assert!(matches!(
+                map_event(key, modal),
+                Some(AppEvent::Action(Action::ScrollRight))
+            ));
+        }
+    }
+
+    #[test]
+    fn shift_wheel_scrolls_horizontally() {
+        let event = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::SHIFT,
+        });
+        assert!(matches!(
+            map_event(event, Modal::None),
+            Some(AppEvent::Action(Action::ScrollRight))
+        ));
     }
 
     #[test]
