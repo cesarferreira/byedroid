@@ -440,6 +440,8 @@ pub struct App {
     pub max_log_lines: usize,
     log_revision: u64,
     log_view_cache: LogViewportCache,
+    pub log_horizontal_scroll: u16,
+    pub log_horizontal_max: u16,
     pub filter_input: String,
     pub filter_focused: bool,
     pub exclude_input: String,
@@ -708,6 +710,8 @@ impl App {
             max_log_lines: 10_000,
             log_revision: 0,
             log_view_cache: LogViewportCache::default(),
+            log_horizontal_scroll: 0,
+            log_horizontal_max: 0,
             filter_input: String::new(),
             filter_focused: false,
             exclude_input: String::new(),
@@ -1491,6 +1495,15 @@ impl App {
                     self.show_error_toast(format!("logcat: {e}"));
                 }
             }
+            Action::ScrollLeft => {
+                self.log_horizontal_scroll = self.log_horizontal_scroll.saturating_sub(8);
+            }
+            Action::ScrollRight => {
+                self.log_horizontal_scroll = self
+                    .log_horizontal_scroll
+                    .saturating_add(8)
+                    .min(self.log_horizontal_max.max(self.log_horizontal_scroll));
+            }
             Action::FocusFilter => {
                 self.filter_focused = !self.filter_focused;
                 if self.filter_focused {
@@ -2231,6 +2244,8 @@ mod tests {
             max_log_lines: 10_000,
             log_revision: 0,
             log_view_cache: LogViewportCache::default(),
+            log_horizontal_scroll: 0,
+            log_horizontal_max: 0,
             filter_input: String::new(),
             filter_focused: false,
             exclude_input: String::new(),
@@ -2274,6 +2289,54 @@ mod tests {
             picker_cursor: 0,
             picker_variants: Vec::new(),
         }
+    }
+
+    use crate::action::Action;
+    use ratatui::Terminal;
+
+    fn draw_test_app(app: &mut App) -> ratatui::buffer::Buffer {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn logcat_does_not_wrap_and_can_scroll_to_hidden_text() {
+        let mut app = test_app();
+        let mut entry = numbered_entry(0, "I");
+        entry.message = format!("{}HIDDEN", "x".repeat(120));
+        app.log_lines = vec![entry, numbered_entry(1, "I")];
+        let buffer = draw_test_app(&mut app);
+        let row = (0..24)
+            .find(|&y| (0..80).any(|x| buffer[(x, y)].symbol() == "x"))
+            .unwrap();
+        let next_row: String = (0..80).map(|x| buffer[(x, row + 1)].symbol()).collect();
+        assert!(
+            next_row.contains("message 1"),
+            "long log should occupy only one row"
+        );
+        for _ in 0..20 {
+            app.handle_action(Action::ScrollRight).unwrap();
+        }
+        let buffer = draw_test_app(&mut app);
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(text.contains("HIDDEN"));
+    }
+
+    #[test]
+    fn horizontal_scroll_survives_a_viewport_of_shorter_logs() {
+        let mut app = test_app();
+        app.log_lines = (0..60).map(|i| numbered_entry(i, "I")).collect();
+        app.log_lines[0].message = "x".repeat(240);
+        app.log_scroll = 59;
+        draw_test_app(&mut app);
+        app.handle_action(Action::ScrollRight).unwrap();
+        draw_test_app(&mut app);
+        assert_eq!(app.log_horizontal_scroll, 8);
+        app.log_scroll = 0;
+        draw_test_app(&mut app);
+        assert_eq!(app.log_horizontal_scroll, 8);
     }
 
     #[test]

@@ -172,6 +172,7 @@ The command includes checks for:
 | `l` | Toggle logcat on/off |
 | `L` | Log level picker |
 | `a` | Toggle all-logs / package-filter mode |
+| `←` `→` / horizontal wheel / Shift+wheel | Scroll logcat horizontally (lines do not wrap) |
 | `f` | Include filter |
 | `x` | Exclude filter |
 | `w` | Export visible log to `byedroid-<timestamp>.log` |

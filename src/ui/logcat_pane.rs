@@ -1,11 +1,13 @@
-//! Full-screen logcat pane — rustycat-style rendering with word-wrap.
+//! Full-screen logcat pane — rustycat-style rendering with horizontal scrolling.
 //!
-//! Column layout:  [timestamp 12] [TAG right-aligned 23] [LEVEL 3] [message wraps]
+//! Column layout:  [timestamp 12] [TAG right-aligned 23] [LEVEL 3] [unwrapped message]
 //! Tags are suppressed on repeated runs (rustycat style).
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -13,8 +15,6 @@ use crate::modules::logcat::{level_style, tag_color};
 
 const TAG_WIDTH: usize = 23;
 const TS_WIDTH: usize = 12;
-// prefix = TS_WIDTH + 1(space) + TAG_WIDTH + 1(space) + 3(level) + 1(space) = 41
-const PREFIX_WIDTH: usize = TS_WIDTH + 1 + TAG_WIDTH + 1 + 3 + 1;
 
 pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let paused = app.logcat_paused;
@@ -137,7 +137,6 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
 
     let header_h = header_lines.len() as u16;
     let visible_rows = inner.height.saturating_sub(header_h).max(1) as usize;
-    let msg_width = (inner.width as usize).saturating_sub(PREFIX_WIDTH).max(20);
 
     let total = app.log_lines.len();
     let viewport = app.log_viewport_window(app.log_scroll, visible_rows);
@@ -186,82 +185,70 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             }
         };
 
-        let chunks = word_wrap(&entry.message, msg_width);
-
-        for (ci, chunk) in chunks.into_iter().enumerate().rev() {
-            if ci == 0 {
-                let show_tag = entry.tag != last_tag;
-                let tag_display = if show_tag {
-                    right_pad(&entry.tag, TAG_WIDTH)
-                } else {
-                    " ".repeat(TAG_WIDTH)
-                };
-                let tag_style = if crash_bg {
-                    Style::default()
-                        .fg(Color::Rgb(255, 180, 180))
-                        .bg(Color::Rgb(80, 0, 0))
-                } else if show_tag {
-                    Style::default().fg(tc)
-                } else {
-                    Style::default().fg(Color::Rgb(40, 40, 55))
-                };
-                let ts_style = if crash_bg {
-                    Style::default()
-                        .fg(Color::Rgb(255, 200, 200))
-                        .bg(Color::Rgb(80, 0, 0))
-                } else {
-                    Style::default().fg(Color::Rgb(80, 80, 100))
-                };
-                collected.push(Line::from(vec![
-                    Span::styled(
-                        format!("{:<width$} ", entry.timestamp, width = TS_WIDTH),
-                        ts_style,
-                    ),
-                    Span::styled(tag_display, tag_style),
-                    Span::raw(" "),
-                    Span::styled(format!(" {} ", lc), lvl_style_span),
-                    Span::raw(" "),
-                    Span::styled(
-                        chunk,
-                        Style::default()
-                            .fg(msg_fg)
-                            .bg(if crash_bg {
-                                Color::Rgb(80, 0, 0)
-                            } else {
-                                Color::Reset
-                            })
-                            .add_modifier(msg_modifier),
-                    ),
-                ]));
-            } else {
-                let blank = " ".repeat(PREFIX_WIDTH);
-                collected.push(Line::from(vec![
-                    Span::raw(blank),
-                    Span::styled(
-                        chunk,
-                        Style::default()
-                            .fg(msg_fg)
-                            .bg(if crash_bg {
-                                Color::Rgb(80, 0, 0)
-                            } else {
-                                Color::Reset
-                            })
-                            .add_modifier(msg_modifier),
-                    ),
-                ]));
-            }
-        }
+        let show_tag = entry.tag != last_tag;
+        let tag_display = if show_tag {
+            right_pad(&entry.tag, TAG_WIDTH)
+        } else {
+            " ".repeat(TAG_WIDTH)
+        };
+        let tag_style = if crash_bg {
+            Style::default()
+                .fg(Color::Rgb(255, 180, 180))
+                .bg(Color::Rgb(80, 0, 0))
+        } else if show_tag {
+            Style::default().fg(tc)
+        } else {
+            Style::default().fg(Color::Rgb(40, 40, 55))
+        };
+        let ts_style = if crash_bg {
+            Style::default()
+                .fg(Color::Rgb(255, 200, 200))
+                .bg(Color::Rgb(80, 0, 0))
+        } else {
+            Style::default().fg(Color::Rgb(80, 80, 100))
+        };
+        collected.push(Line::from(vec![
+            Span::styled(
+                format!("{:<width$} ", entry.timestamp, width = TS_WIDTH),
+                ts_style,
+            ),
+            Span::styled(tag_display, tag_style),
+            Span::raw(" "),
+            Span::styled(format!(" {} ", lc), lvl_style_span),
+            Span::raw(" "),
+            Span::styled(
+                entry.message.clone(),
+                Style::default()
+                    .fg(msg_fg)
+                    .bg(if crash_bg {
+                        Color::Rgb(80, 0, 0)
+                    } else {
+                        Color::Reset
+                    })
+                    .add_modifier(msg_modifier),
+            ),
+        ]));
         last_tag = entry.tag.clone();
     }
 
     collected.reverse();
     let start = collected.len().saturating_sub(visible_rows);
 
-    let mut lines: Vec<Line> = Vec::new();
-    lines.extend(header_lines);
-
+    let header_h = header_h.min(inner.height);
+    f.render_widget(
+        Paragraph::new(header_lines),
+        Rect {
+            height: header_h,
+            ..inner
+        },
+    );
+    let log_area = Rect {
+        y: inner.y + header_h,
+        height: inner.height.saturating_sub(header_h),
+        ..inner
+    };
     if total == 0 {
-        lines.push(Line::from(Span::styled(
+        collected.push(Line::from(Span::styled(
             if running {
                 " Waiting for log lines…"
             } else {
@@ -269,38 +256,36 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             },
             Style::default().fg(Color::DarkGray),
         )));
-    } else {
-        lines.extend_from_slice(&collected[start..]);
     }
-
-    f.render_widget(Paragraph::new(lines), inner);
-}
-
-fn word_wrap(msg: &str, max_chars: usize) -> Vec<String> {
-    if max_chars == 0 {
-        return vec![msg.to_string()];
+    let max_scroll = collected
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(log_area.width as usize)
+        .min(u16::MAX as usize) as u16;
+    app.log_horizontal_max = max_scroll;
+    // Keep the requested position when shorter logs enter the viewport.
+    let horizontal_scroll = app.log_horizontal_scroll.min(max_scroll);
+    f.render_widget(
+        Paragraph::new(collected[start..].to_vec()).scroll((0, horizontal_scroll)),
+        log_area,
+    );
+    if max_scroll > 0 {
+        let mut state = ScrollbarState::new(max_scroll as usize + 1)
+            .position(horizontal_scroll as usize)
+            .viewport_content_length(log_area.width as usize);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::HorizontalBottom),
+            Rect {
+                x: inner.x,
+                y: area.bottom().saturating_sub(1),
+                width: inner.width,
+                height: 1,
+            },
+            &mut state,
+        );
     }
-    if msg.chars().count() <= max_chars {
-        return vec![msg.to_string()];
-    }
-    let mut lines = Vec::new();
-    let mut remaining = msg;
-    while !remaining.is_empty() {
-        if remaining.chars().count() <= max_chars {
-            lines.push(remaining.to_string());
-            break;
-        }
-        let slice: String = remaining.chars().take(max_chars).collect();
-        let split_at = slice.rfind(' ').unwrap_or(max_chars);
-        let byte_split = remaining
-            .char_indices()
-            .nth(split_at)
-            .map(|(i, _)| i)
-            .unwrap_or(remaining.len());
-        lines.push(remaining[..byte_split].to_string());
-        remaining = remaining[byte_split..].trim_start_matches(' ');
-    }
-    lines
 }
 
 fn right_pad(s: &str, width: usize) -> String {

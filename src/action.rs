@@ -4,6 +4,8 @@ pub enum Action {
     Quit,
     // Logcat
     ToggleLogcat,
+    ScrollLeft,
+    ScrollRight,
     FocusFilter,
     ClearFilter,
     FocusExclude,
