@@ -72,6 +72,50 @@ pub fn parse_log_line(line: &str) -> Option<LogEntry> {
     })
 }
 
+/// Find the latest complete JSON object or array, preserving its original text.
+/// Consecutive messages from the same logger may contain a multi-line payload.
+pub fn last_valid_json(entries: &[LogEntry]) -> Option<String> {
+    let mut end = entries.len();
+    while end > 0 {
+        let last = &entries[end - 1];
+        let mut start = end - 1;
+        while start > 0 && entries[start - 1].pid == last.pid && entries[start - 1].tag == last.tag
+        {
+            start -= 1;
+        }
+        let text = entries[start..end]
+            .iter()
+            // The display parser normalizes whitespace; use the raw message for copying.
+            .map(|entry| {
+                entry
+                    .raw
+                    .split_once(": ")
+                    .map_or(entry.message.as_str(), |(_, message)| message)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut remaining = text.as_str();
+        let mut latest = None;
+        while let Some(start) = remaining.find(['{', '[']) {
+            remaining = &remaining[start..];
+            let mut values =
+                serde_json::Deserializer::from_str(remaining).into_iter::<serde_json::Value>();
+            if matches!(values.next(), Some(Ok(_))) {
+                let end = values.byte_offset();
+                latest = Some(remaining[..end].to_string());
+                remaining = &remaining[end..];
+            } else {
+                remaining = &remaining[1..];
+            }
+        }
+        if latest.is_some() {
+            return latest;
+        }
+        end = start;
+    }
+    None
+}
+
 /// A captured crash / ANR block (cloned lines for export / yank).
 #[derive(Debug, Clone)]
 pub struct CrashEvent {
@@ -315,6 +359,99 @@ pub fn looks_like_stack_trace(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn json_entries(messages: &[&str]) -> Vec<LogEntry> {
+        messages
+            .iter()
+            .map(|message| {
+                parse_log_line(&format!(
+                    "02-03 15:44:41.704  2359  3654 I MyTag: {message}"
+                ))
+                .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn copies_latest_json_skipping_invalid_and_incomplete_payloads() {
+        let entries = json_entries(&[
+            r#"response: {"old": true}"#,
+            r#"response: [1, {"latest": "yes"}] trailing text"#,
+            "{invalid}",
+            r#"{"incomplete": "#,
+        ]);
+        assert_eq!(
+            last_valid_json(&entries).as_deref(),
+            Some(r#"[1, {"latest": "yes"}]"#)
+        );
+    }
+
+    #[test]
+    fn keeps_outer_json_and_handles_strings_and_multiple_payloads() {
+        let entries = json_entries(&[
+            r#"first {} then {"nested": {"text": "braces } [ and escaped \" quote"}}"#,
+        ]);
+        assert_eq!(
+            last_valid_json(&entries).as_deref(),
+            Some(r#"{"nested": {"text": "braces } [ and escaped \" quote"}}"#)
+        );
+    }
+
+    #[test]
+    fn copies_multiline_json_without_logcat_prefixes() {
+        let entries = json_entries(&[
+            "Response: {",
+            r#"  "items": ["#,
+            r#"    {"id": 1}"#,
+            "  ]",
+            "}",
+        ]);
+        assert_eq!(
+            last_valid_json(&entries).as_deref(),
+            Some("{\n  \"items\": [\n    {\"id\": 1}\n  ]\n}")
+        );
+    }
+
+    #[test]
+    fn preserves_whitespace_inside_json_strings() {
+        let entries = json_entries(&[r#"Response: { "text": "two   spaces and a\\path" }"#]);
+        assert_eq!(
+            last_valid_json(&entries).as_deref(),
+            Some(r#"{ "text": "two   spaces and a\\path" }"#)
+        );
+    }
+
+    #[test]
+    fn does_not_join_payloads_across_different_loggers() {
+        let mut entries = json_entries(&[r#"{"old": true}"#, "{", r#""x": 1}"#]);
+        entries[2].tag = "OtherTag".to_string();
+        assert_eq!(
+            last_valid_json(&entries).as_deref(),
+            Some(r#"{"old": true}"#)
+        );
+        entries[2].tag = entries[1].tag.clone();
+        entries[2].pid = "another-process".to_string();
+        assert_eq!(
+            last_valid_json(&entries).as_deref(),
+            Some(r#"{"old": true}"#)
+        );
+    }
+
+    #[test]
+    fn no_json_for_empty_logs_plain_text_or_invalid_payloads() {
+        assert_eq!(last_valid_json(&[]), None);
+        assert_eq!(
+            last_valid_json(&json_entries(&[
+                "hello",
+                "true",
+                "42",
+                "{invalid}",
+                "[1,]",
+                "{unfinished"
+            ])),
+            None
+        );
+    }
 
     #[test]
     fn parse_sample_logcat_line() {

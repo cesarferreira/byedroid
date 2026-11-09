@@ -18,6 +18,7 @@ pub enum Action {
     ScrollPageDown,
     ScrollTail,
     ExportLogs,
+    CopyLastJson,
     OpenCrashDetail,
     CrashCopy,
     CrashAgent,
