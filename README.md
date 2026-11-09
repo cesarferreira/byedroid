@@ -172,6 +172,8 @@ The command includes checks for:
 | `l` | Toggle logcat on/off |
 | `L` | Log level picker |
 | `a` | Toggle all-logs / package-filter mode |
+| `Ctrl+f` | Highlight matching text in logs without filtering; jump to the first literal match (Enter keeps it, Esc clears) |
+| `←` `→` / horizontal wheel / Shift+wheel | Scroll logcat horizontally, including while searching (lines do not wrap) |
 | `f` | Include filter |
 | `x` | Exclude filter |
 | `w` | Export visible log to `byedroid-<timestamp>.log` |

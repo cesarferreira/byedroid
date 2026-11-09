@@ -18,6 +18,7 @@ pub enum AppEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modal {
     None,
+    Search,
     Filter,
     ExcludeFilter,
     LevelPicker,
@@ -44,10 +45,20 @@ fn map_event(event: Event, modal: Modal) -> Option<AppEvent> {
             if key.kind == KeyEventKind::Release {
                 return None;
             }
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.code == KeyCode::Char('f')
+                && matches!(
+                    modal,
+                    Modal::None | Modal::Search | Modal::Filter | Modal::ExcludeFilter
+                )
+            {
+                return Some(AppEvent::Action(Action::FocusSearch));
+            }
             if key.modifiers == KeyModifiers::CONTROL {
                 return Some(AppEvent::Suspend);
             }
             match modal {
+                Modal::Search => map_search(key.code, key.modifiers),
                 Modal::Filter => map_filter(key.code, key.modifiers),
                 Modal::ExcludeFilter => map_exclude_filter(key.code, key.modifiers),
                 Modal::LevelPicker | Modal::VariantPicker | Modal::DevicePicker => {
@@ -68,15 +79,25 @@ fn map_event(event: Event, modal: Modal) -> Option<AppEvent> {
 }
 
 fn map_mouse(mouse: MouseEvent, modal: Modal) -> Option<AppEvent> {
-    // Wheel scroll only — clicks/drags are ignored. Needed so terminals (and
-    // tmux) forward the wheel to the app instead of scrolling the pane history.
+    // Trackpads emit horizontal wheel events; Shift+wheel supports ordinary mice.
     let action = match mouse.kind {
+        MouseEventKind::ScrollLeft => Action::ScrollLeft,
+        MouseEventKind::ScrollRight => Action::ScrollRight,
+        MouseEventKind::ScrollUp if mouse.modifiers.contains(KeyModifiers::SHIFT) => {
+            Action::ScrollLeft
+        }
+        MouseEventKind::ScrollDown if mouse.modifiers.contains(KeyModifiers::SHIFT) => {
+            Action::ScrollRight
+        }
         MouseEventKind::ScrollUp => Action::ScrollUp,
         MouseEventKind::ScrollDown => Action::ScrollDown,
         _ => return None,
     };
     match modal {
-        Modal::None | Modal::BuildPopup | Modal::CrashDetail | Modal::BuildHistory => {
+        Modal::None | Modal::Search => Some(AppEvent::Action(action)),
+        Modal::BuildPopup | Modal::CrashDetail | Modal::BuildHistory
+            if matches!(action, Action::ScrollUp | Action::ScrollDown) =>
+        {
             Some(AppEvent::Action(action))
         }
         _ => None,
@@ -156,6 +177,22 @@ fn map_package_picker(code: KeyCode, modifiers: KeyModifiers) -> Option<AppEvent
     }
 }
 
+fn map_search(code: KeyCode, modifiers: KeyModifiers) -> Option<AppEvent> {
+    match code {
+        KeyCode::Left => Some(AppEvent::Action(Action::ScrollLeft)),
+        KeyCode::Right => Some(AppEvent::Action(Action::ScrollRight)),
+        KeyCode::Up => Some(AppEvent::Action(Action::ScrollUp)),
+        KeyCode::Down => Some(AppEvent::Action(Action::ScrollDown)),
+        KeyCode::PageUp => Some(AppEvent::Action(Action::ScrollPageUp)),
+        KeyCode::PageDown => Some(AppEvent::Action(Action::ScrollPageDown)),
+        KeyCode::Esc => Some(AppEvent::Action(Action::ClearSearch)),
+        KeyCode::Enter => Some(AppEvent::Action(Action::FocusSearch)),
+        KeyCode::Backspace => Some(AppEvent::Backspace),
+        KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => Some(AppEvent::Text(c)),
+        _ => None,
+    }
+}
+
 fn map_filter(code: KeyCode, modifiers: KeyModifiers) -> Option<AppEvent> {
     match code {
         KeyCode::Esc => Some(AppEvent::Action(Action::ClearFilter)),
@@ -192,6 +229,8 @@ fn map_normal(code: KeyCode, modifiers: KeyModifiers) -> Option<AppEvent> {
         {
             Some(Action::ScrollDown)
         }
+        KeyCode::Left => Some(Action::ScrollLeft),
+        KeyCode::Right => Some(Action::ScrollRight),
         KeyCode::PageUp => Some(Action::ScrollPageUp),
         KeyCode::PageDown => Some(Action::ScrollPageDown),
         KeyCode::End => Some(Action::ScrollTail),
@@ -290,9 +329,78 @@ mod tests {
     }
 
     #[test]
+    fn horizontal_scroll_works_with_mouse_and_while_searching() {
+        for modal in [Modal::None, Modal::Search] {
+            assert!(matches!(
+                map_event(mouse(MouseEventKind::ScrollRight), modal),
+                Some(AppEvent::Action(Action::ScrollRight))
+            ));
+            assert!(matches!(
+                map_event(mouse(MouseEventKind::ScrollLeft), modal),
+                Some(AppEvent::Action(Action::ScrollLeft))
+            ));
+            let key = Event::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+            assert!(matches!(
+                map_event(key, modal),
+                Some(AppEvent::Action(Action::ScrollRight))
+            ));
+        }
+    }
+
+    #[test]
+    fn shift_wheel_scrolls_horizontally() {
+        let event = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::SHIFT,
+        });
+        assert!(matches!(
+            map_event(event, Modal::Search),
+            Some(AppEvent::Action(Action::ScrollRight))
+        ));
+    }
+
+    #[test]
     fn mouse_clicks_are_ignored() {
         assert!(map_event(mouse(MouseEventKind::Down(MouseButton::Left)), Modal::None).is_none());
         assert!(map_event(mouse(MouseEventKind::Up(MouseButton::Left)), Modal::None).is_none());
+    }
+
+    #[test]
+    fn search_keys_are_routed_without_suspending_or_triggering_shortcuts() {
+        let key = Event::Key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert!(matches!(
+            map_event(key, Modal::None),
+            Some(AppEvent::Action(Action::FocusSearch))
+        ));
+        assert!(matches!(
+            map_event(
+                Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+                Modal::Search
+            ),
+            Some(AppEvent::Text('q'))
+        ));
+        assert!(matches!(
+            map_search(KeyCode::Backspace, KeyModifiers::NONE),
+            Some(AppEvent::Backspace)
+        ));
+        assert!(matches!(
+            map_search(KeyCode::Esc, KeyModifiers::NONE),
+            Some(AppEvent::Action(Action::ClearSearch))
+        ));
+        assert!(matches!(
+            map_search(KeyCode::Enter, KeyModifiers::NONE),
+            Some(AppEvent::Action(Action::FocusSearch))
+        ));
+        assert!(matches!(
+            map_normal(KeyCode::Left, KeyModifiers::NONE),
+            Some(AppEvent::Action(Action::ScrollLeft))
+        ));
+        assert!(matches!(
+            map_normal(KeyCode::Right, KeyModifiers::NONE),
+            Some(AppEvent::Action(Action::ScrollRight))
+        ));
     }
 
     #[test]

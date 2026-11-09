@@ -56,6 +56,16 @@ pub fn render(f: &mut Frame<'_>, _app: &App, area: Rect) {
         section("LOGCAT"),
         row("l", "toggle logcat", Color::Rgb(203, 166, 247)),
         row("L", "log levels", Color::Rgb(244, 162, 97)),
+        row(
+            "Ctrl+f",
+            "search (Enter keep, Esc clear)",
+            Color::Rgb(249, 226, 175),
+        ),
+        row(
+            "←→",
+            "horizontal scroll / Shift+wheel",
+            Color::Rgb(137, 220, 235),
+        ),
         row("f", "filter", Color::Rgb(249, 226, 175)),
         row("x", "exclude", Color::Rgb(250, 179, 135)),
         row("a", "all / package toggle", Color::Rgb(249, 226, 175)),
