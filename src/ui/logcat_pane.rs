@@ -21,7 +21,9 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let running = app.logcat_running;
     let scrolled = app.log_scroll > 0;
 
-    let title = if app.exclude_focused {
+    let title = if app.search_focused {
+        " Logcat [SEARCH] "
+    } else if app.exclude_focused {
         " Logcat  [EXCLUDE] "
     } else if app.filter_focused {
         " Logcat  [FILTER] "
@@ -42,7 +44,9 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         " Logcat "
     };
 
-    let border_style = Style::default().fg(if app.exclude_focused {
+    let border_style = Style::default().fg(if app.search_focused {
+        Color::Yellow
+    } else if app.exclude_focused {
         Color::Rgb(255, 150, 100)
     } else if app.level_picker_open {
         Color::Rgb(244, 162, 97)
@@ -59,7 +63,50 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    let search_match = if app.search_input.is_empty() {
+        None
+    } else {
+        let all = app.log_viewport_window(0, usize::MAX);
+        all.indices.iter().enumerate().find_map(|(position, &idx)| {
+            let text = search_text(&app.log_lines[idx]);
+            text.find(&app.search_input).map(|start| {
+                (
+                    idx,
+                    all.visible_count - position - 1,
+                    start,
+                    Span::raw(&text[..start]).width(),
+                )
+            })
+        })
+    };
+    let scroll_to_match = app.search_needs_scroll;
+    if scroll_to_match {
+        if let Some((_, _, _, column)) = search_match {
+            let width = inner.width as usize;
+            let context =
+                (width / 3).min(width.saturating_sub(Span::raw(&app.search_input).width()));
+            app.log_horizontal_scroll =
+                column.saturating_sub(context).min(u16::MAX as usize) as u16;
+        }
+        app.search_needs_scroll = false;
+    }
+
     let mut header_lines: Vec<Line> = Vec::new();
+    if app.search_focused || !app.search_input.is_empty() {
+        header_lines.push(Line::from(vec![
+            Span::styled(" search: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(app.search_input.clone(), Style::default().fg(Color::Yellow)),
+            Span::raw(if app.search_focused { "█" } else { "" }),
+            Span::styled(
+                if !app.search_input.is_empty() && search_match.is_none() {
+                    "  No matches"
+                } else {
+                    "  Enter keep · Esc clear"
+                },
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
     let level_summary = app.current_level_filter_summary();
     if level_summary != "all" {
         header_lines.push(Line::from(vec![
@@ -138,6 +185,11 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let header_h = header_lines.len() as u16;
     let visible_rows = inner.height.saturating_sub(header_h).max(1) as usize;
 
+    if scroll_to_match {
+        if let Some((_, scroll, _, _)) = search_match {
+            app.log_scroll = scroll.saturating_sub(visible_rows / 2);
+        }
+    }
     let total = app.log_lines.len();
     let viewport = app.log_viewport_window(app.log_scroll, visible_rows);
     app.log_scroll = viewport.scroll_from_bottom;
@@ -185,7 +237,9 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             }
         };
 
-        let show_tag = entry.tag != last_tag;
+        let show_tag = entry.tag != last_tag
+            || (!app.search_input.is_empty()
+                && right_pad(&entry.tag, TAG_WIDTH).contains(&app.search_input));
         let tag_display = if show_tag {
             right_pad(&entry.tag, TAG_WIDTH)
         } else {
@@ -228,6 +282,13 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
                     .add_modifier(msg_modifier),
             ),
         ]));
+        if !app.search_input.is_empty() {
+            let text = search_text(entry);
+            let line = collected.last_mut().unwrap();
+            for (start, matched) in text.match_indices(&app.search_input) {
+                highlight_match(line, start, matched.len());
+            }
+        }
         last_tag = entry.tag.clone();
     }
 
@@ -286,6 +347,42 @@ pub fn render(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             &mut state,
         );
     }
+}
+
+fn search_text(entry: &crate::modules::logcat::LogEntry) -> String {
+    format!(
+        "{:<width$} {}  {}  {}",
+        entry.timestamp,
+        right_pad(&entry.tag, TAG_WIDTH),
+        entry.level,
+        entry.message,
+        width = TS_WIDTH
+    )
+}
+
+fn highlight_match(line: &mut Line<'_>, start: usize, len: usize) {
+    let mut offset = 0;
+    let mut spans = Vec::new();
+    for span in &line.spans {
+        let end = offset + span.content.len();
+        let from = start.saturating_sub(offset).min(span.content.len());
+        let to = (start + len).saturating_sub(offset).min(span.content.len());
+        if from < to {
+            spans.push(Span::styled(span.content[..from].to_string(), span.style));
+            spans.push(Span::styled(
+                span.content[from..to].to_string(),
+                span.style
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(span.content[to..].to_string(), span.style));
+        } else {
+            spans.push(span.clone());
+        }
+        offset = end;
+    }
+    line.spans = spans;
 }
 
 fn right_pad(s: &str, width: usize) -> String {
