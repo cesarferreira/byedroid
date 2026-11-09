@@ -187,9 +187,7 @@ fn map_normal(code: KeyCode, modifiers: KeyModifiers) -> Option<AppEvent> {
         {
             Some(Action::ScrollUp)
         }
-        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J')
-            if !modifiers.contains(KeyModifiers::CONTROL) =>
-        {
+        KeyCode::Down | KeyCode::Char('j') if !modifiers.contains(KeyModifiers::CONTROL) => {
             Some(Action::ScrollDown)
         }
         KeyCode::PageUp => Some(Action::ScrollPageUp),
@@ -208,6 +206,7 @@ fn map_normal(code: KeyCode, modifiers: KeyModifiers) -> Option<AppEvent> {
         KeyCode::Char('r') | KeyCode::Char('R') => Some(Action::RunApp),
 
         // Logcat
+        KeyCode::Char('J') => Some(Action::CopyLastJson),
         KeyCode::Char('l') => Some(Action::ToggleLogcat),
         KeyCode::Char('L') => Some(Action::OpenLevelPicker),
         KeyCode::Char('f') | KeyCode::Char('F') => Some(Action::FocusFilter),
@@ -293,6 +292,19 @@ mod tests {
     fn mouse_clicks_are_ignored() {
         assert!(map_event(mouse(MouseEventKind::Down(MouseButton::Left)), Modal::None).is_none());
         assert!(map_event(mouse(MouseEventKind::Up(MouseButton::Left)), Modal::None).is_none());
+    }
+
+    #[test]
+    fn shift_j_copies_json_and_lowercase_j_still_scrolls() {
+        let key = Event::Key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT));
+        assert!(matches!(
+            map_event(key.clone(), Modal::None),
+            Some(AppEvent::Action(Action::CopyLastJson))
+        ));
+        assert!(matches!(
+            map_normal(KeyCode::Char('j'), KeyModifiers::NONE),
+            Some(AppEvent::Action(Action::ScrollDown))
+        ));
     }
 
     #[test]

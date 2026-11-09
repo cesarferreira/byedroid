@@ -175,6 +175,7 @@ The command includes checks for:
 | `f` | Include filter |
 | `x` | Exclude filter |
 | `w` | Export visible log to `byedroid-<timestamp>.log` |
+| `Shift+J` | Copy the last valid JSON object or array from buffered logs (including multiline payloads from the same logger) |
 | `y` | Crash detail popup (`c` copy · `a` agent prompt · `w` export · `s` search) |
 | `H` | Build history overlay |
 | `Space` | Pause / resume log streaming |

@@ -18,9 +18,9 @@ use crate::modules::build::{find_gradle, spawn_gradle};
 use crate::modules::config::{save_global_config, save_project_config, MergedConfig};
 use crate::modules::device::scan_devices;
 use crate::modules::logcat::{
-    clear_buffer, is_crash_continuation, is_crash_start, matches_any_exclude_with_cached,
-    matches_level_filter, parse_log_line, refresh_pids_for_packages, spawn_logcat_reader,
-    CrashEvent, LogEntry, LogcatFilter,
+    clear_buffer, is_crash_continuation, is_crash_start, last_valid_json,
+    matches_any_exclude_with_cached, matches_level_filter, parse_log_line,
+    refresh_pids_for_packages, spawn_logcat_reader, CrashEvent, LogEntry, LogcatFilter,
 };
 use crate::modules::mirror::{detect_scrcpy_display, launch_scrcpy};
 use crate::modules::project::{infer_project, ProjectInference};
@@ -1513,6 +1513,16 @@ impl App {
                 self.cached_exclude_lower.clear();
                 self.exclude_focused = false;
             }
+            Action::CopyLastJson => {
+                if let Some(json) = last_valid_json(&self.log_lines) {
+                    match copy_to_clipboard(&json) {
+                        Ok(()) => self.show_toast("Copied last valid JSON"),
+                        Err(error) => self.show_error_toast(format!("Copy JSON: {error}")),
+                    }
+                } else {
+                    self.show_toast("No valid JSON object or array in logcat");
+                }
+            }
             Action::ExportLogs => {
                 if let Err(e) = self.export_logs_to_file() {
                     self.show_error_toast(format!("export: {e}"));
@@ -2012,7 +2022,12 @@ fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
     if let Some(stdin) = child.stdin.as_mut() {
         stdin.write_all(text.as_bytes())?;
     }
-    let _ = child.wait();
+    let status = child.wait()?;
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "Clipboard command failed: {status}"
+        )));
+    }
     Ok(())
 }
 
@@ -2274,6 +2289,19 @@ mod tests {
             picker_cursor: 0,
             picker_variants: Vec::new(),
         }
+    }
+
+    use crate::action::Action;
+
+    #[test]
+    fn copying_json_without_a_payload_reports_it() {
+        let mut app = test_app();
+        app.log_lines = vec![numbered_entry(0, "I")];
+        app.handle_action(Action::CopyLastJson).unwrap();
+        assert_eq!(
+            app.toast.as_ref().unwrap().message,
+            "No valid JSON object or array in logcat"
+        );
     }
 
     #[test]
